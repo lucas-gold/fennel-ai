@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+backend/.venv/
+*.egg-info/
+
+# Swift
+.build/
+app/.build/
+
+# Models (downloaded on first launch; never committed)
+models/
+*.gguf
+*.safetensors
+
+# macOS
+.DS_Store
