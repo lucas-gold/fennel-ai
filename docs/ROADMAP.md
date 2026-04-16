@@ -20,16 +20,18 @@ works. Deep per-component notes live in the reference spec
 
 Success: Swift app connects, round-trips a text ping.
 
-## Stage 1 — Text chat, end to end  ◄ NEXT
+## Stage 1 — Text chat, end to end  ✓ DONE
 
-- Python: `llm.py` with `mlx-lm` (Qwen3.5-4B), streaming tokens over WS, with
-  explicit prefix-cache reuse (reference D4).
-- Swift: chat UI streams tokens as they arrive.
+- Python: `her/llm.py` with `mlx-lm` streaming Qwen3-4B, explicit prefix-cache
+  reuse (D4 — verified: turn 2 reused 28/45 prompt tokens). Model
+  `mlx-community/Qwen3-4B-Instruct-2507-4bit` (~2.3 GB, first-run download).
+- Swift: chat UI streams tokens as they arrive (no change needed from Stage 0).
+- Toolchain: backend Python via **uv** (Homebrew python@3.12 is broken on
+  macOS 26 — see `scripts/setup-venv.sh`).
 
-Success: type in the Swift app, see a streamed local reply. Proves MLX + the
-WS contract before any audio.
+Verified: `server.py` streamed a real reply over the WS contract end to end.
 
-## Stage 2 — Voice
+## Stage 2 — Voice  ◄ NEXT
 
 - Swift: `AVAudioEngine` capture with `setVoiceProcessingEnabled(true)` (AEC)
   → 16 kHz int16 frames over WS; playback of returned PCM; voice-orb

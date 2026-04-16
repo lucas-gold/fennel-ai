@@ -73,8 +73,20 @@ app/                       Swift package / Xcode project (SwiftUI)
 training/                  SEPARATE: Phase-4 LoRA fine-tuning + evals (Python)
 ```
 
+## Running it (Stage 1)
+
+```bash
+./scripts/setup-venv.sh                       # one-time: uv + Python 3.12 + deps
+backend/.venv/bin/python backend/server.py    # loads Qwen (first run downloads ~2.3 GB)
+```
+Then, in another terminal:
+```bash
+cd app && swift run                           # SwiftUI app; type to chat locally
+```
+
 ## Status
 
-Fresh build from the reference design docs in `~/Downloads/files/`. No code
-yet. Build order in `docs/ROADMAP.md`; Stage 1 (native text chat over the WS
-contract) is next.
+Fresh build from the reference design docs in `~/Downloads/files/`. **Stages 0–1
+done**: two-process transport + native LLM text chat with prefix-cache reuse
+(D4), verified end to end. Build order in `docs/ROADMAP.md`; Stage 2 (voice:
+VAD/STT/TTS + AEC) is next.

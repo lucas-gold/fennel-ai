@@ -1,8 +1,9 @@
-"""Local WebSocket server. Stage 0: echoes user text back as a streamed reply
-so the Swift client can prove the streaming-chat contract before MLX exists.
+"""Local WebSocket server.
 
-Stage 1 replaces the echo in `_handle_user_text` with real mlx-lm streaming
-from `her/llm.py`. Nothing else here should need to change.
+Stage 1: real mlx-lm streaming from `her/llm.py`. One LLM instance holds the
+KV cache; a single local user talks to it at a time, so per-connection we reset
+the conversation. Audio (VAD/STT/TTS) and the session orchestrator arrive in
+Stage 2.
 """
 from __future__ import annotations
 
@@ -12,39 +13,52 @@ import websockets
 
 import config
 import protocol as P
+from her.llm import LLM
 
+_llm: LLM | None = None
 _turn = 0
 
 
-async def _handle_user_text(ws, text: str) -> None:
-    """Stage 0 stand-in for the LLM: stream the text back word by word."""
+async def _handle_user_text(ws, messages: list[dict], text: str) -> None:
     global _turn
+    assert _llm is not None
     _turn += 1
     turn = _turn
 
+    messages.append({"role": "user", "content": text})
     await ws.send(P.encode("state", value="thinking"))
-    reply = f"(echo) {text}"
-    for word in reply.split(" "):
-        await ws.send(P.encode("token", turn=turn, text=word + " "))
-        await asyncio.sleep(0.02)  # simulate token cadence
+
+    reply = ""
+    async for chunk in _llm.astream(messages):
+        reply += chunk
+        await ws.send(P.encode("token", turn=turn, text=chunk))
+
+    messages.append({"role": "assistant", "content": reply})
     await ws.send(P.encode("turn_end", turn=turn))
     await ws.send(P.encode("state", value="idle"))
 
 
 async def handler(ws) -> None:
+    assert _llm is not None
+    _llm.reset()
+    messages: list[dict] = [{"role": "system", "content": config.LLM_SYSTEM}]
     await ws.send(P.encode("state", value="idle"))
     async for raw in ws:
         if isinstance(raw, bytes):
             continue  # audio frames arrive in Stage 2
         msg = P.decode(raw)
         if msg["type"] == "user_text":
-            await _handle_user_text(ws, msg.get("text", ""))
+            await _handle_user_text(ws, messages, msg.get("text", ""))
         elif msg["type"] == "ping":
             await ws.send(P.encode("pong"))
 
 
 async def main() -> None:
-    print(f"my_ai backend listening on ws://{config.HOST}:{config.PORT}  (tier={config.TIER})")
+    global _llm
+    print(f"loading LLM {config.LLM_MODEL} …", flush=True)
+    _llm = await asyncio.to_thread(LLM)
+    print(f"my_ai backend listening on ws://{config.HOST}:{config.PORT}  "
+          f"(tier={config.TIER})", flush=True)
     async with websockets.serve(handler, config.HOST, config.PORT):
         await asyncio.Future()  # run forever
 
