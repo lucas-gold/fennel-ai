@@ -1,0 +1,9 @@
+# Stage 0 — just the transport.
+websockets>=12
+
+# Added in later stages (Apple Silicon only):
+#   Stage 1  mlx-lm            # LLM
+#   Stage 2  mlx-whisper       # STT
+#            mlx-audio         # TTS (Kokoro)
+#            onnxruntime       # Silero VAD (never the silero-vad pkg; ref D10)
+#   Stage 4  (SQLite FTS5 is built into Python's stdlib)
