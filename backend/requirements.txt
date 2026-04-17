@@ -5,8 +5,12 @@
 websockets>=12
 mlx-lm>=0.31
 
-# Later stages (Apple Silicon only):
-#   Stage 2  mlx-whisper        # STT
-#            mlx-audio          # TTS (Kokoro)
-#            onnxruntime        # Silero VAD (never the silero-vad pkg; D10)
-#   Stage 4  SQLite FTS5 is in the Python stdlib
+# Stage 2 (Apple Silicon only)
+mlx-whisper>=0.4      # STT (whisper-large-v3-turbo)
+mlx-audio>=0.2        # TTS (Kokoro); note: pulls torch — shipping debt, see ROADMAP
+misaki[en]            # Kokoro's G2P text processing (required)
+onnxruntime>=1.20     # Silero VAD (never the silero-vad pkg; D10)
+soundfile             # audio file I/O (tools/tests)
+scipy                 # resampling in tools/tests
+
+# Stage 4  SQLite FTS5 is in the Python stdlib

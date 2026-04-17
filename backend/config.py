@@ -41,3 +41,12 @@ LLM_SYSTEM = (
     "to speak aloud."
 )
 LLM_MAX_TOKENS = MAX_TOKENS
+
+# ── STT / TTS (Stage 2) ────────────────────────────────────────────────────
+STT_MODEL = "mlx-community/whisper-large-v3-turbo"  # D9: turbo (~3.7% WER, fast)
+TTS_MODEL = "mlx-community/Kokoro-82M-4bit"
+TTS_VOICE = "af_heart"  # check per-voice CC-BY before shipping (SHIPPING.md)
+
+# Clause splitter (D5): greedy first fragment, longer later chunks.
+CLAUSE_FIRST_CHARS = 30
+CLAUSE_REST_CHARS = 90

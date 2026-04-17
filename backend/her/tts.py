@@ -1,0 +1,86 @@
+"""TTS stage: Kokoro via mlx-audio, plus the greedy clause splitter (D5).
+
+The mlx-audio call is isolated in `_synth` on purpose: its API moves between
+releases, so if Kokoro breaks on load or synthesis that is the ONLY function to
+change — don't refactor outward from it (CLAUDE.md).
+"""
+from __future__ import annotations
+
+import re
+from typing import Optional
+
+import numpy as np
+from mlx_audio.tts.utils import load_model
+
+import config
+
+# A hard sentence end: . ! ? … optionally followed by a closing quote/bracket,
+# then whitespace or end of buffer.
+_SENT_END = re.compile(r"[.!?…]['\"”’)\]]?(?:\s|$)")
+
+
+class ClauseSplitter:
+    """Cut the first speakable fragment aggressively (~30 chars) to minimise
+    time-to-first-audio, then use longer spans (~90) for better prosody once
+    audio is already playing. A hard sentence end always cuts regardless of
+    length, so "Sure." goes out immediately (D5)."""
+
+    def __init__(self, first: int = config.CLAUSE_FIRST_CHARS,
+                 rest: int = config.CLAUSE_REST_CHARS) -> None:
+        self._first, self._rest = first, rest
+        self._buf = ""
+        self._is_first = True
+
+    def _threshold(self) -> int:
+        return self._first if self._is_first else self._rest
+
+    def feed(self, text: str) -> list[str]:
+        """Add streamed text; return any clauses that are now complete."""
+        self._buf += text
+        out: list[str] = []
+        while (clause := self._try_cut()) is not None:
+            out.append(clause)
+            self._is_first = False
+        return out
+
+    def _try_cut(self) -> Optional[str]:
+        # 1) hard sentence end anywhere wins
+        if m := _SENT_END.search(self._buf):
+            clause, self._buf = self._buf[:m.end()].strip(), self._buf[m.end():]
+            return clause or None
+        # 2) otherwise cut at a word boundary once past the threshold
+        thr = self._threshold()
+        if len(self._buf) >= thr:
+            sp = self._buf.find(" ", thr)
+            if sp != -1:
+                clause, self._buf = self._buf[:sp].strip(), self._buf[sp + 1:]
+                return clause or None
+        return None
+
+    def flush(self) -> str:
+        """Emit whatever is left (end of reply)."""
+        clause, self._buf = self._buf.strip(), ""
+        if clause:
+            self._is_first = False
+        return clause
+
+
+class KokoroTTS:
+    SAMPLE_RATE = 24000
+
+    def __init__(self, model_id: str = config.TTS_MODEL,
+                 voice: str = config.TTS_VOICE) -> None:
+        self._model = load_model(model_id)
+        self._voice = voice
+
+    def _synth(self, text: str) -> np.ndarray:
+        """Isolated mlx-audio call. Returns float32 mono @24 kHz in [-1, 1]."""
+        segs = self._model.generate(text=text, voice=self._voice, speed=1.0)
+        parts = [np.array(s.audio, copy=False).astype(np.float32).reshape(-1)
+                 for s in segs]
+        return np.concatenate(parts) if parts else np.zeros(0, np.float32)
+
+    def synth_pcm(self, text: str) -> np.ndarray:
+        """int16 PCM @24 kHz for one clause — ready to frame over the wire."""
+        a = self._synth(text)
+        return (np.clip(a, -1.0, 1.0) * 32767.0).astype(np.int16)
