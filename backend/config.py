@@ -50,3 +50,12 @@ TTS_VOICE = "af_heart"  # check per-voice CC-BY before shipping (SHIPPING.md)
 # Clause splitter (D5): greedy first fragment, longer later chunks.
 CLAUSE_FIRST_CHARS = 30
 CLAUSE_REST_CHARS = 90
+
+# ── VAD / endpointing (Stage 2) ────────────────────────────────────────────
+# Latency hides in turn-taking, not the models — tune END_SILENCE_MS first (D2).
+VAD_MODEL = "models/silero_vad.onnx"
+FRAME_SAMPLES = 512      # 32 ms @16 kHz — the Silero v5 window (== client frame)
+VAD_THRESHOLD = 0.5
+END_SILENCE_MS = 500     # cuts you off < 700; feels laggy > 350
+MIN_SPEECH_MS = 200      # ignore blips shorter than this
+PREROLL_FRAMES = 5       # ~160 ms kept before onset so the first word isn't clipped
