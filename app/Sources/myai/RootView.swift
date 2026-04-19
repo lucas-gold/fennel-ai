@@ -9,27 +9,62 @@ struct RootView: View {
     }
 }
 
-/// Reactive home surface. Stage 3 fills this with reminder/calendar/pinned
-/// cards driven by backend tool calls; for now it shows the assistant state
-/// (the seed of the voice orb).
+/// Reactive home surface: the voice orb + (Stage 3) reminder/calendar/pinned
+/// cards driven by backend tool calls.
 private struct HomePanel: View {
     @EnvironmentObject var chat: ChatModel
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack(spacing: 8) {
-                Circle()
-                    .fill(chat.state == .idle ? Color.secondary : Color.accentColor)
-                    .frame(width: 12, height: 12)
-                Text(chat.state.label).font(.headline)
-            }
+        VStack(spacing: 18) {
             Text("Home").font(.title2).bold()
-            Text("Reminders, calendar, and pinned panels will appear here (Stage 3).")
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            Spacer()
+            VoiceOrb(state: chat.state, listening: chat.listening, level: chat.level)
+                .onTapGesture { chat.toggleListening() }
+            Text(chat.listening ? "Listening — tap to stop"
+                                : (chat.state == .idle ? "Tap to talk" : chat.state.label))
                 .font(.callout).foregroundStyle(.secondary)
             Spacer()
+
+            Text("Reminders, calendar, and pinned panels will appear here (Stage 3).")
+                .font(.footnote).foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding()
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+/// The on-screen voice interface: a halo that swells with mic level and recolors
+/// by assistant state (idle/listening/thinking/speaking).
+private struct VoiceOrb: View {
+    let state: AssistantState
+    let listening: Bool
+    let level: Float
+
+    private var color: Color {
+        switch state {
+        case .speaking: return .green
+        case .thinking: return .orange
+        default: return listening ? .accentColor : .secondary
+        }
+    }
+
+    var body: some View {
+        ZStack {
+            Circle()
+                .fill(color.opacity(0.22))
+                .frame(width: 120, height: 120)
+                .scaleEffect(1 + CGFloat(level) * 0.6)
+                .animation(.easeOut(duration: 0.10), value: level)
+            Circle().fill(color).frame(width: 62, height: 62)
+            Image(systemName: listening ? "mic.fill" : "mic.slash.fill")
+                .font(.system(size: 22, weight: .semibold))
+                .foregroundStyle(.white)
+        }
+        .frame(width: 140, height: 140)
+        .contentShape(Circle())
     }
 }
 
