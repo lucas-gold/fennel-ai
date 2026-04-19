@@ -43,14 +43,17 @@ Verified: `server.py` streamed a real reply over the WS contract end to end.
 - Binary audio framing in `protocol.py`; `server.py` handles mic-in / audio-out.
 - Debt: `mlx-audio` pulls torch (~2.5 GB) — revisit (kokoro-onnx?) at Stage 5.
 
-**Swift audio engine ◄ NEXT:**
-- `AVAudioEngine` capture with `setVoiceProcessingEnabled(true)` (native AEC)
-  → 512-sample int16 @16 kHz frames over WS.
-- Playback of returned 24 kHz PCM (`>II` header), with immediate stop on barge-in.
-- Voice-orb visualizer driven by the `state` frames.
+**Swift audio engine ✓ WRITTEN — ◄ needs live verification:**
+- `AudioEngine.swift` — `AVAudioEngine` capture with `setVoiceProcessingEnabled(true)`
+  (native AEC) → 512-sample int16 @16 kHz frames; 24 kHz PCM playback, turn-aware +
+  barge-in stop. Binary WS frames in `Net.swift`. Voice orb + mic toggle.
+- Packaged as a `.app` via `scripts/build-app.sh` (Info.plist mic usage + ad-hoc
+  sign) — a bare `swift run` binary can't get microphone TCC.
 
-Success: speak, get interruptible spoken replies. Verify AEC prevents
-self-interruption (the whole reason capture is native — D6). "Feels alive."
+Still to verify live (needs a mic + speakers): (1) mic permission prompt appears
+and capture works; (2) AEC actually prevents self-interruption (D6); (3) barge-in
+stops playback + LLM within ~100 ms. Run: `./scripts/build-app.sh` then open the
+app with the backend running.
 
 ## Stage 3 — Reactive home + tools + EventKit
 
