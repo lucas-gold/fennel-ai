@@ -1,66 +1,68 @@
 """Local WebSocket server.
 
-Stage 1: real mlx-lm streaming from `her/llm.py`. One LLM instance holds the
-KV cache; a single local user talks to it at a time, so per-connection we reset
-the conversation. Audio (VAD/STT/TTS) and the session orchestrator arrive in
-Stage 2.
+Stage 2: full voice loop through `her/session.py`. Text control frames carry
+state/tokens/tool calls; binary frames carry audio — mic in (int16 mono 16 kHz,
+512-sample frames), audio out (">II" header + int16 PCM @24 kHz). The typed
+chat box still works and now also speaks its reply.
 """
 from __future__ import annotations
 
 import asyncio
 
+import numpy as np
 import websockets
 
 import config
 import protocol as P
 from her.llm import LLM
+from her.session import Session
+from her.stt import WhisperSTT
+from her.tts import KokoroTTS
 
-_llm: LLM | None = None
-_turn = 0
-
-
-async def _handle_user_text(ws, messages: list[dict], text: str) -> None:
-    global _turn
-    assert _llm is not None
-    _turn += 1
-    turn = _turn
-
-    messages.append({"role": "user", "content": text})
-    await ws.send(P.encode("state", value="thinking"))
-
-    reply = ""
-    async for chunk in _llm.astream(messages):
-        reply += chunk
-        await ws.send(P.encode("token", turn=turn, text=chunk))
-
-    messages.append({"role": "assistant", "content": reply})
-    await ws.send(P.encode("turn_end", turn=turn))
-    await ws.send(P.encode("state", value="idle"))
+_stt: WhisperSTT
+_llm: LLM
+_tts: KokoroTTS
 
 
 async def handler(ws) -> None:
-    assert _llm is not None
-    _llm.reset()
-    messages: list[dict] = [{"role": "system", "content": config.LLM_SYSTEM}]
+    async def send_control(s: str) -> None:
+        await ws.send(s)
+
+    async def send_audio(b: bytes) -> None:
+        await ws.send(b)
+
+    session = Session(send_control, send_audio, _stt, _llm, _tts)
     await ws.send(P.encode("state", value="idle"))
-    async for raw in ws:
-        if isinstance(raw, bytes):
-            continue  # audio frames arrive in Stage 2
-        msg = P.decode(raw)
-        if msg["type"] == "user_text":
-            await _handle_user_text(ws, messages, msg.get("text", ""))
-        elif msg["type"] == "ping":
-            await ws.send(P.encode("pong"))
+    try:
+        async for raw in ws:
+            if isinstance(raw, (bytes, bytearray)):
+                # mic frame: int16 mono @16 kHz → float32 [-1, 1]
+                frame = np.frombuffer(raw, dtype="<i2").astype(np.float32) / 32768.0
+                await session.feed_frame(frame)
+            else:
+                msg = P.decode(raw)
+                if msg["type"] == "user_text":
+                    await session.feed_text(msg.get("text", ""))
+                elif msg["type"] == "ping":
+                    await ws.send(P.encode("pong"))
+    finally:
+        await session.close()
 
 
 async def main() -> None:
-    global _llm
-    print(f"loading LLM {config.LLM_MODEL} …", flush=True)
+    global _stt, _llm, _tts
+    print("loading models "
+          f"({config.LLM_MODEL.split('/')[-1]}, "
+          f"{config.STT_MODEL.split('/')[-1]}, "
+          f"{config.TTS_MODEL.split('/')[-1]}) …", flush=True)
     _llm = await asyncio.to_thread(LLM)
+    _tts = await asyncio.to_thread(KokoroTTS)
+    _stt = WhisperSTT()
+    await asyncio.to_thread(_stt.warmup)  # prime whisper so turn 1 is fast
     print(f"my_ai backend listening on ws://{config.HOST}:{config.PORT}  "
           f"(tier={config.TIER})", flush=True)
-    async with websockets.serve(handler, config.HOST, config.PORT):
-        await asyncio.Future()  # run forever
+    async with websockets.serve(handler, config.HOST, config.PORT, max_size=None):
+        await asyncio.Future()
 
 
 if __name__ == "__main__":

@@ -9,7 +9,8 @@ doubles time-to-first-token.
 from __future__ import annotations
 
 import asyncio
-from typing import AsyncIterator, Iterator
+import threading
+from typing import AsyncIterator, Iterator, Optional
 
 from mlx_lm import load, stream_generate
 from mlx_lm.models.cache import make_prompt_cache, trim_prompt_cache
@@ -62,38 +63,56 @@ class LLM:
               f"(reused prefix {common}/{len(prompt_ids)})", flush=True)
 
         generated: list[int] = []
-        for resp in stream_generate(
-            self.model, self.tokenizer, prompt=delta,
-            max_tokens=config.LLM_MAX_TOKENS, prompt_cache=self._cache,
-        ):
-            generated.append(resp.token)
-            if resp.text:
-                yield resp.text
+        completed = False
+        try:
+            for resp in stream_generate(
+                self.model, self.tokenizer, prompt=delta,
+                max_tokens=config.LLM_MAX_TOKENS, prompt_cache=self._cache,
+            ):
+                generated.append(resp.token)
+                if resp.text:
+                    yield resp.text
+            completed = True
+        finally:
+            if completed:
+                # The cache now physically holds prompt_ids + generated.
+                self._cached_ids = prompt_ids + generated
+            else:
+                # Interrupted (generator closed by barge-in): the cache holds
+                # tokens the user never fully heard — drop it so next turn does a
+                # clean re-prefill (D3/D4).
+                self.reset()
 
-        # The cache now physically holds prompt_ids + generated.
-        self._cached_ids = prompt_ids + generated
-
-    async def astream(self, messages: list[Message]) -> AsyncIterator[str]:
+    async def astream(self, messages: list[Message],
+                      stop: Optional["threading.Event"] = None) -> AsyncIterator[str]:
         """Async wrapper: run the blocking generator off the event loop and
-        deliver chunks as they arrive (never block audio delivery — CLAUDE.md)."""
+        deliver chunks as they arrive (never block audio delivery — CLAUDE.md).
+        If `stop` is set (barge-in) we stop pulling and close the generator, which
+        halts MLX generation and triggers the cache reset above."""
         loop = asyncio.get_running_loop()
         queue: asyncio.Queue = asyncio.Queue()
 
         def worker() -> None:
+            gen = self.stream_reply(messages)
             try:
-                for chunk in self.stream_reply(messages):
+                for chunk in gen:
+                    if stop is not None and stop.is_set():
+                        break
                     loop.call_soon_threadsafe(queue.put_nowait, chunk)
             except Exception as exc:  # surface worker errors to the awaiter
                 loop.call_soon_threadsafe(queue.put_nowait, exc)
             finally:
+                gen.close()  # -> stream_reply.finally on interruption
                 loop.call_soon_threadsafe(queue.put_nowait, None)
 
         fut = loop.run_in_executor(None, worker)
-        while True:
-            item = await queue.get()
-            if item is None:
-                break
-            if isinstance(item, Exception):
-                raise item
-            yield item
-        await fut
+        try:
+            while True:
+                item = await queue.get()
+                if item is None:
+                    break
+                if isinstance(item, Exception):
+                    raise item
+                yield item
+        finally:
+            await fut
