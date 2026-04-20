@@ -5,7 +5,7 @@ running entirely on-device. No API key, no account, no network after the
 first model download. Ships as a paid, direct-download Mac app.
 
 Video is deliberately left out of v1; the seam is cut on the Python side
-(`backend/her/vision.py`) for later.
+(`backend/voice/vision.py`) for later.
 
 ## Architecture — two local processes
 
@@ -65,7 +65,7 @@ docs/ROADMAP.md            staged build order
 backend/                   Python + MLX
   server.py                WebSocket server, model bootstrap
   config.py                tunables + RAM tiering
-  her/
+  voice/
     vad.py  stt.py  llm.py  tts.py  session.py  memory.py  vision.py
   requirements.txt
 app/                       Swift package / Xcode project (SwiftUI)

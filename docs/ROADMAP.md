@@ -22,7 +22,7 @@ Success: Swift app connects, round-trips a text ping.
 
 ## Stage 1 — Text chat, end to end  ✓ DONE
 
-- Python: `her/llm.py` with `mlx-lm` streaming Qwen3-4B, explicit prefix-cache
+- Python: `voice/llm.py` with `mlx-lm` streaming Qwen3-4B, explicit prefix-cache
   reuse (D4 — verified: turn 2 reused 28/45 prompt tokens). Model
   `mlx-community/Qwen3-4B-Instruct-2507-4bit` (~2.3 GB, first-run download).
 - Swift: chat UI streams tokens as they arrive (no change needed from Stage 0).
