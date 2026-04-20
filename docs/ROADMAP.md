@@ -31,17 +31,26 @@ Success: Swift app connects, round-trips a text ping.
 
 Verified: `server.py` streamed a real reply over the WS contract end to end.
 
-## Stage 2 — Voice  ◄ NEXT
+## Stage 2 — Voice
 
-- Swift: `AVAudioEngine` capture with `setVoiceProcessingEnabled(true)` (AEC)
-  → 16 kHz int16 frames over WS; playback of returned PCM; voice-orb
-  visualizer driven by VAD state.
-- Python: `vad.py` (Silero ONNX via onnxruntime — reference D10), `stt.py`
-  (`mlx-whisper`), `tts.py` (Kokoro via `mlx-audio` + clause splitter D5),
-  `session.py` orchestrator with the epoch counter + barge-in (reference D3).
+**Python backend ✓ DONE (verified end to end):**
+- `vad.py` — Silero v5 on onnxruntime (D10, no torch); 64-sample context prepend
+  was the key fix. Endpointer with preroll + `END_SILENCE_MS`.
+- `stt.py` — `mlx-whisper` turbo, array input (no ffmpeg).
+- `tts.py` — Kokoro via `mlx-audio` (needs `misaki`), greedy clause splitter (D5).
+- `session.py` — orchestrator with epoch counter + barge-in (D3): LLM stop-event,
+  generator close, cache reset on interrupt, partial reply committed with `—`.
+- Binary audio framing in `protocol.py`; `server.py` handles mic-in / audio-out.
+- Debt: `mlx-audio` pulls torch (~2.5 GB) — revisit (kokoro-onnx?) at Stage 5.
 
-Success: speak, get interrupted-able spoken replies. Verify AEC prevents
-self-interruption. This is "feels alive."
+**Swift audio engine ◄ NEXT:**
+- `AVAudioEngine` capture with `setVoiceProcessingEnabled(true)` (native AEC)
+  → 512-sample int16 @16 kHz frames over WS.
+- Playback of returned 24 kHz PCM (`>II` header), with immediate stop on barge-in.
+- Voice-orb visualizer driven by the `state` frames.
+
+Success: speak, get interruptible spoken replies. Verify AEC prevents
+self-interruption (the whole reason capture is native — D6). "Feels alive."
 
 ## Stage 3 — Reactive home + tools + EventKit
 
