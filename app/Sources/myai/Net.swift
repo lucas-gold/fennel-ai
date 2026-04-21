@@ -26,8 +26,9 @@ final class WebSocketClient {
     private let url = URL(string: "ws://127.0.0.1:8420")!
     private var task: URLSessionWebSocketTask?
 
-    /// Called off the main thread; hop to the main actor in the handler.
+    /// Both called off the main thread; hop to the main actor in the handler.
     var onControl: (([String: Any]) -> Void)?
+    var onAudio: ((_ turn: Int, _ seq: Int, _ pcm: Data) -> Void)?
 
     func connect() {
         let task = URLSession(configuration: .default).webSocketTask(with: url)
@@ -42,6 +43,12 @@ final class WebSocketClient {
         }
     }
 
+    func send(_ data: Data) {          // mic frames
+        task?.send(.data(data)) { error in
+            if let error { print("ws send(data) error:", error) }
+        }
+    }
+
     private func receive() {
         task?.receive { [weak self] result in
             guard let self else { return }
@@ -49,11 +56,23 @@ final class WebSocketClient {
             case .failure(let error):
                 print("ws receive error:", error) // Stage 2: reconnect/backoff
             case .success(let message):
-                if case let .string(text) = message, let msg = Wire.decode(text) {
-                    self.onControl?(msg)
+                switch message {
+                case .string(let text):
+                    if let msg = Wire.decode(text) { self.onControl?(msg) }
+                case .data(let data):
+                    self.handleAudio(data)   // ">II" header + int16 PCM
+                @unknown default:
+                    break
                 }
                 self.receive()
             }
         }
+    }
+
+    private func handleAudio(_ data: Data) {
+        guard data.count > 8 else { return }
+        let turn = data.prefix(4).reduce(0) { ($0 << 8) | Int($1) }
+        let seq = data.subdata(in: 4..<8).reduce(0) { ($0 << 8) | Int($1) }
+        onAudio?(turn, seq, data.subdata(in: 8..<data.count))
     }
 }

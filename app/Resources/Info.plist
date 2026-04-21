@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleName</key>
+    <string>my_ai</string>
+    <key>CFBundleDisplayName</key>
+    <string>my_ai</string>
+    <key>CFBundleExecutable</key>
+    <string>MyAI</string>
+    <key>CFBundleIdentifier</key>
+    <string>com.lucas.myai</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleShortVersionString</key>
+    <string>0.1</string>
+    <key>CFBundleVersion</key>
+    <string>1</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>14.0</string>
+    <key>NSHighResolutionCapable</key>
+    <true/>
+    <key>NSPrincipalClass</key>
+    <string>NSApplication</string>
+    <!-- Voice: required or the app crashes when requesting the mic. -->
+    <key>NSMicrophoneUsageDescription</key>
+    <string>my_ai listens to your voice to chat with you, entirely on your Mac.</string>
+    <!-- EventKit (Stage 3): reminders + calendar the assistant writes to. -->
+    <key>NSRemindersUsageDescription</key>
+    <string>my_ai adds reminders you ask it to create.</string>
+    <key>NSCalendarsUsageDescription</key>
+    <string>my_ai adds calendar events you ask it to create.</string>
+</dict>
+</plist>
