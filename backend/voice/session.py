@@ -48,6 +48,7 @@ class Session:
         self._turn_task: Optional[asyncio.Task] = None
         self._stop = threading.Event()
         self._assistant_active = False
+        self._rx = 0  # mic frames received (debug)
 
     # ── lifecycle ──────────────────────────────────────────────────────────
 
@@ -68,15 +69,25 @@ class Session:
         endpoint = self._endpointer.process(frame_f32)
         onset = self._endpointer.speaking and not was_speaking
 
+        self._rx += 1
+        if self._rx % 50 == 0:
+            peak = float(np.abs(frame_f32).max())
+            print(f"[vad] rx={self._rx} frames peak={peak:.3f} "
+                  f"speaking={self._endpointer.speaking}", flush=True)
+        if onset:
+            print("[vad] speech onset", flush=True)
+
         if onset and self._assistant_active:
             await self._barge_in()
         if endpoint is not None:
+            print(f"[vad] endpoint: {len(endpoint.audio)/16000:.2f}s", flush=True)
             await self._start_turn(audio=endpoint.audio)
 
-    async def feed_text(self, text: str) -> None:
-        """Typed input: skip VAD/STT, go straight to LLM + spoken reply."""
+    async def feed_text(self, text: str, speak: bool = False) -> None:
+        """Typed input: skip VAD/STT, go straight to the LLM. Speaks the reply
+        only if the user enabled it (voice turns always speak)."""
         if text.strip():
-            await self._start_turn(text=text)
+            await self._start_turn(text=text, speak=speak)
 
     # ── turn control ───────────────────────────────────────────────────────
 
@@ -95,19 +106,21 @@ class Session:
             await self._turn_task
 
     async def _start_turn(self, audio: Optional[np.ndarray] = None,
-                          text: Optional[str] = None) -> None:
+                          text: Optional[str] = None, speak: bool = True) -> None:
         await self._supersede()
         self._epoch += 1
         self._stop = threading.Event()
         epoch = self._epoch
-        self._turn_task = asyncio.create_task(self._run_turn(epoch, audio, text))
+        self._turn_task = asyncio.create_task(self._run_turn(epoch, audio, text, speak))
 
     async def _run_turn(self, epoch: int, audio: Optional[np.ndarray],
-                        text: Optional[str]) -> None:
+                        text: Optional[str], speak: bool = True) -> None:
         from_voice = text is None
+        do_speak = from_voice or speak       # voice turns always speak
         if from_voice:
             await self._send_control(P.encode("state", value="thinking"))
             text = await asyncio.to_thread(self._stt.transcribe, audio)
+            print(f"[stt] -> {text!r}", flush=True)
         if not self._live(epoch) or not text.strip():
             return
         if from_voice:  # let the UI show what was heard
@@ -121,37 +134,41 @@ class Session:
         spoken = ""
         seq = 0
 
-        async def speak(clause: str) -> None:
+        async def speak_clause(clause: str) -> None:
             nonlocal seq, spoken
             if not clause or not self._live(epoch):
                 return
             pcm = await asyncio.to_thread(self._tts.synth_pcm, clause)
-            if not self._live(epoch):
+            if pcm.size == 0 or not self._live(epoch):
                 return
             await self._send_audio(P.pack_audio(turn, seq, pcm))
             seq += 1
             spoken += clause + " "
 
-        self._assistant_active = True
-        await self._send_control(P.encode("state", value="speaking"))
+        self._assistant_active = do_speak
+        if do_speak:
+            await self._send_control(P.encode("state", value="speaking"))
         try:
             async for chunk in self._llm.astream(self._messages, stop=self._stop):
                 if not self._live(epoch):
                     break
                 reply += chunk
                 await self._send_control(P.encode("token", turn=turn, text=chunk))
-                for clause in splitter.feed(chunk):
-                    await speak(clause)
-                    if not self._live(epoch):
-                        break
+                if do_speak:
+                    for clause in splitter.feed(chunk):
+                        await speak_clause(clause)
+                        if not self._live(epoch):
+                            break
             else:
-                await speak(splitter.flush())
+                if do_speak:
+                    await speak_clause(splitter.flush())
         finally:
             self._assistant_active = False
             if self._live(epoch):
                 self._messages.append({"role": "assistant", "content": reply})
                 await self._send_control(P.encode("turn_end", turn=turn))
-                await self._send_control(P.encode("state", value="idle"))
+                if do_speak:
+                    await self._send_control(P.encode("state", value="idle"))
             else:
                 # barge-in: history records only what was actually spoken (D3)
                 self._messages.append(

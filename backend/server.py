@@ -42,7 +42,8 @@ async def handler(ws) -> None:
             else:
                 msg = P.decode(raw)
                 if msg["type"] == "user_text":
-                    await session.feed_text(msg.get("text", ""))
+                    await session.feed_text(msg.get("text", ""),
+                                            speak=bool(msg.get("speak", False)))
                 elif msg["type"] == "ping":
                     await ws.send(P.encode("pong"))
     finally:

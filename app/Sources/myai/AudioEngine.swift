@@ -27,6 +27,7 @@ final class AudioEngine {
     private var ready = false
     private var isListening = false
     private var currentTurn = -1
+    private var sent = 0   // debug: buffers captured while listening
 
     // MARK: - lifecycle
 
@@ -83,6 +84,12 @@ final class AudioEngine {
         DispatchQueue.main.async { self.onLevel?(listening ? min(rms * 4, 1) : 0) }
 
         guard listening else { return }
+        sent += 1
+        if sent % 50 == 0 {
+            print(String(format: "[mic] %d buffers, rms=%.3f, in=%dch/%.0fHz->16k n=%d",
+                         sent, rms, Int(input.format.channelCount),
+                         input.format.sampleRate, n))
+        }
         ch[0].withMemoryRebound(to: UInt8.self, capacity: n * 2) {
             pending.append($0, count: n * 2)
         }

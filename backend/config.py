@@ -46,6 +46,7 @@ LLM_MAX_TOKENS = MAX_TOKENS
 STT_MODEL = "mlx-community/whisper-large-v3-turbo"  # D9: turbo (~3.7% WER, fast)
 TTS_MODEL = "mlx-community/Kokoro-82M-4bit"
 TTS_VOICE = "af_heart"  # check per-voice CC-BY before shipping (SHIPPING.md)
+TTS_SPEED = 1.15        # Kokoro speed; >1 speaks faster
 
 # Clause splitter (D5): greedy first fragment, longer later chunks.
 CLAUSE_FIRST_CHARS = 30

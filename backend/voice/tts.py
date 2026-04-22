@@ -7,6 +7,7 @@ change — don't refactor outward from it (CLAUDE.md).
 from __future__ import annotations
 
 import re
+import unicodedata
 from typing import Optional
 
 import numpy as np
@@ -17,6 +18,17 @@ import config
 # A hard sentence end: . ! ? … optionally followed by a closing quote/bracket,
 # then whitespace or end of buffer.
 _SENT_END = re.compile(r"[.!?…]['\"”’)\]]?(?:\s|$)")
+
+# Variation selector + zero-width joiner used to compose emoji.
+_EMOJI_JOINERS = {0xFE0F, 0x200D}
+
+
+def speakable(text: str) -> str:
+    """Strip emoji and other symbol characters (Unicode category 'So') plus the
+    emoji joiners, so Kokoro doesn't try to pronounce them."""
+    kept = [ch for ch in text
+            if unicodedata.category(ch) != "So" and ord(ch) not in _EMOJI_JOINERS]
+    return re.sub(r"\s+", " ", "".join(kept)).strip()
 
 
 class ClauseSplitter:
@@ -75,12 +87,16 @@ class KokoroTTS:
 
     def _synth(self, text: str) -> np.ndarray:
         """Isolated mlx-audio call. Returns float32 mono @24 kHz in [-1, 1]."""
-        segs = self._model.generate(text=text, voice=self._voice, speed=1.0)
+        segs = self._model.generate(text=text, voice=self._voice, speed=config.TTS_SPEED)
         parts = [np.array(s.audio, copy=False).astype(np.float32).reshape(-1)
                  for s in segs]
         return np.concatenate(parts) if parts else np.zeros(0, np.float32)
 
     def synth_pcm(self, text: str) -> np.ndarray:
-        """int16 PCM @24 kHz for one clause — ready to frame over the wire."""
+        """int16 PCM @24 kHz for one clause (emoji stripped). Empty if nothing
+        speakable remains."""
+        text = speakable(text)
+        if not text:
+            return np.zeros(0, dtype=np.int16)
         a = self._synth(text)
         return (np.clip(a, -1.0, 1.0) * 32767.0).astype(np.int16)

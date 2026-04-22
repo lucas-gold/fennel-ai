@@ -77,14 +77,24 @@ private struct VoiceOrb: View {
 private struct ChatPanel: View {
     @EnvironmentObject var chat: ChatModel
     @State private var draft = ""
+    private let bottomID = "bottom"
 
     var body: some View {
         VStack(spacing: 0) {
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 8) {
-                    ForEach(chat.messages) { MessageRow(message: $0) }
+            ScrollViewReader { proxy in
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 8) {
+                        ForEach(chat.messages) { MessageRow(message: $0) }
+                        Color.clear.frame(height: 1).id(bottomID)
+                    }
+                    .padding()
                 }
-                .padding()
+                .onChange(of: chat.messages.count) { _, _ in
+                    withAnimation(.easeOut(duration: 0.15)) { proxy.scrollTo(bottomID, anchor: .bottom) }
+                }
+                .onChange(of: chat.messages.last?.text) { _, _ in
+                    proxy.scrollTo(bottomID, anchor: .bottom)
+                }
             }
             Divider()
             HStack {
@@ -93,7 +103,12 @@ private struct ChatPanel: View {
                     .onSubmit(send)
                 Button("Send", action: send).disabled(draft.isEmpty)
             }
-            .padding()
+            .padding(.horizontal).padding(.top, 8)
+            Toggle("Speak typed replies", isOn: $chat.speakTypedReplies)
+                .toggleStyle(.checkbox)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .padding(.horizontal).padding(.bottom, 8)
         }
     }
 
