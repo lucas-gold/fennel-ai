@@ -40,6 +40,12 @@ class LLM:
         self._cache = make_prompt_cache(self.model)
         self._cached_ids = []
 
+    def warmup(self) -> None:
+        """Compile Metal kernels with a throwaway generation so turn 1 is fast."""
+        for _ in self.stream_reply([{"role": "user", "content": "Hi"}]):
+            pass
+        self.reset()
+
     def _prompt_ids(self, messages: list[Message]) -> list[int]:
         return list(
             self.tokenizer.apply_chat_template(

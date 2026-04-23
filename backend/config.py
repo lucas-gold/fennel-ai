@@ -43,13 +43,16 @@ LLM_SYSTEM = (
 LLM_MAX_TOKENS = MAX_TOKENS
 
 # ── STT / TTS (Stage 2) ────────────────────────────────────────────────────
-STT_MODEL = "mlx-community/whisper-large-v3-turbo"  # D9: turbo (~3.7% WER, fast)
+# small.en ~300ms vs turbo's ~2.2s here (D9 revisited: turbo's accuracy edge
+# wasn't worth 7x the latency on clean English). base.en (~90ms) if you want
+# it even snappier and can accept a bit more error.
+STT_MODEL = "mlx-community/whisper-small.en-mlx"
 TTS_MODEL = "mlx-community/Kokoro-82M-4bit"
 TTS_VOICE = "af_heart"  # check per-voice CC-BY before shipping (SHIPPING.md)
 TTS_SPEED = 1.15        # Kokoro speed; >1 speaks faster
 
 # Clause splitter (D5): greedy first fragment, longer later chunks.
-CLAUSE_FIRST_CHARS = 30
+CLAUSE_FIRST_CHARS = 18   # smaller = first audio starts sooner
 CLAUSE_REST_CHARS = 90
 
 # ── VAD / endpointing (Stage 2) ────────────────────────────────────────────
@@ -58,6 +61,6 @@ CLAUSE_REST_CHARS = 90
 VAD_MODEL = os.path.join(os.path.dirname(os.path.abspath(__file__)), "models", "silero_vad.onnx")
 FRAME_SAMPLES = 512      # 32 ms @16 kHz — the Silero v5 window (== client frame)
 VAD_THRESHOLD = 0.5
-END_SILENCE_MS = 500     # cuts you off < 700; feels laggy > 350
+END_SILENCE_MS = 350     # silence before "you're done"; lower = snappier, too low cuts you off
 MIN_SPEECH_MS = 200      # ignore blips shorter than this
 PREROLL_FRAMES = 5       # ~160 ms kept before onset so the first word isn't clipped
