@@ -17,10 +17,10 @@ import numpy as np
 
 import config
 import protocol as P
-from her.llm import LLM
-from her.stt import WhisperSTT
-from her.tts import ClauseSplitter, KokoroTTS
-from her.vad import Endpointer
+from voice.llm import LLM
+from voice.stt import WhisperSTT
+from voice.tts import ClauseSplitter, KokoroTTS
+from voice.vad import Endpointer
 
 Control = Callable[[str], Awaitable[None]]   # send a JSON control string
 Audio = Callable[[bytes], Awaitable[None]]   # send a binary audio frame

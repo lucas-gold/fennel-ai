@@ -41,11 +41,8 @@ final class AudioEngine {
     private func startEngine(mic: Bool) {
         guard !ready else { return }
         do {
-            if mic { try engine.inputNode.setVoiceProcessingEnabled(true) }
-            engine.attach(player)
-            engine.connect(player, to: engine.mainMixerNode, format: tts24k)
-
             if mic {
+                try engine.inputNode.setVoiceProcessingEnabled(true)
                 let inFormat = engine.inputNode.outputFormat(forBus: 0)
                 converter = AVAudioConverter(from: inFormat, to: mic16k)
                 engine.inputNode.installTap(onBus: 0, bufferSize: 1024, format: inFormat) {
@@ -54,6 +51,13 @@ final class AudioEngine {
             }
             engine.prepare()
             try engine.start()
+
+            // Attach playback AFTER the engine is running. With voice processing
+            // enabled, connecting a player *before* start makes the VP output node
+            // fail to initialise (-10875, which surfaced as a CreateRecordingTap
+            // NSException / SIGABRT). A post-start connect reconfigures cleanly.
+            engine.attach(player)
+            engine.connect(player, to: engine.mainMixerNode, format: tts24k)
             player.play()
             ready = true
         } catch {

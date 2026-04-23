@@ -28,6 +28,7 @@ final class ChatModel: ObservableObject {
     @Published var state: AssistantState = .idle
     @Published var listening = false
     @Published var level: Float = 0          // 0…1 mic RMS for the orb
+    @Published var connected = false         // backend reachable?
 
     private let client = WebSocketClient()
     private let audio = AudioEngine()
@@ -44,6 +45,9 @@ final class ChatModel: ObservableObject {
         audio.onMicFrame = { [weak self] data in self?.client.send(data) }
         audio.onLevel = { [weak self] lvl in
             Task { @MainActor in self?.level = lvl }
+        }
+        client.onStatus = { [weak self] up in
+            Task { @MainActor in self?.connected = up }
         }
         audio.prepare()
         client.connect()

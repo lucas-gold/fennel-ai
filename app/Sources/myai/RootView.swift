@@ -16,8 +16,14 @@ private struct HomePanel: View {
 
     var body: some View {
         VStack(spacing: 18) {
-            Text("Home").font(.title2).bold()
-                .frame(maxWidth: .infinity, alignment: .leading)
+            HStack(spacing: 8) {
+                Text("Home").font(.title2).bold()
+                Spacer()
+                Circle().fill(chat.connected ? Color.green : Color.red)
+                    .frame(width: 8, height: 8)
+                Text(chat.connected ? "Backend" : "Offline")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
 
             Spacer()
             VoiceOrb(state: chat.state, listening: chat.listening, level: chat.level)

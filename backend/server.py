@@ -1,6 +1,6 @@
 """Local WebSocket server.
 
-Stage 2: full voice loop through `her/session.py`. Text control frames carry
+Stage 2: full voice loop through `voice/session.py`. Text control frames carry
 state/tokens/tool calls; binary frames carry audio — mic in (int16 mono 16 kHz,
 512-sample frames), audio out (">II" header + int16 PCM @24 kHz). The typed
 chat box still works and now also speaks its reply.
@@ -14,10 +14,10 @@ import websockets
 
 import config
 import protocol as P
-from her.llm import LLM
-from her.session import Session
-from her.stt import WhisperSTT
-from her.tts import KokoroTTS
+from voice.llm import LLM
+from voice.session import Session
+from voice.stt import WhisperSTT
+from voice.tts import KokoroTTS
 
 _stt: WhisperSTT
 _llm: LLM
