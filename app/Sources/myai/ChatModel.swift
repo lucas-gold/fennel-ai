@@ -29,6 +29,7 @@ final class ChatModel: ObservableObject {
     @Published var listening = false
     @Published var level: Float = 0          // 0…1 mic RMS for the orb
     @Published var connected = false         // backend reachable?
+    @Published var speakTypedReplies = false // speak replies to typed messages too
 
     private let client = WebSocketClient()
     private let audio = AudioEngine()
@@ -60,7 +61,7 @@ final class ChatModel: ObservableObject {
 
     func sendUserText(_ text: String) {
         messages.append(ChatMessage(role: .user, text: text))
-        client.send(Wire.encode("user_text", ["text": text]))
+        client.send(Wire.encode("user_text", ["text": text, "speak": speakTypedReplies]))
     }
 
     // MARK: - incoming control frames
