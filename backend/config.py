@@ -53,7 +53,8 @@ CLAUSE_REST_CHARS = 90
 
 # ── VAD / endpointing (Stage 2) ────────────────────────────────────────────
 # Latency hides in turn-taking, not the models — tune END_SILENCE_MS first (D2).
-VAD_MODEL = "models/silero_vad.onnx"
+# Absolute so it resolves no matter the working directory the server is launched from.
+VAD_MODEL = os.path.join(os.path.dirname(os.path.abspath(__file__)), "models", "silero_vad.onnx")
 FRAME_SAMPLES = 512      # 32 ms @16 kHz — the Silero v5 window (== client frame)
 VAD_THRESHOLD = 0.5
 END_SILENCE_MS = 500     # cuts you off < 700; feels laggy > 350
