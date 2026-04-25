@@ -16,6 +16,8 @@ final class AudioEngine {
     private let engine = AVAudioEngine()
     private let player = AVAudioPlayerNode()
     private var converter: AVAudioConverter?
+    private var monoInFormat: AVAudioFormat?
+    private var inRate: Double = 48000
 
     private let mic16k = AVAudioFormat(
         commonFormat: .pcmFormatInt16, sampleRate: 16000, channels: 1, interleaved: true)!
@@ -45,7 +47,14 @@ final class AudioEngine {
             if mic {
                 try engine.inputNode.setVoiceProcessingEnabled(true)
                 let inFormat = engine.inputNode.outputFormat(forBus: 0)
-                converter = AVAudioConverter(from: inFormat, to: mic16k)
+                inRate = inFormat.sampleRate
+                // Voice processing inflates the mono mic to a 7-channel stream and
+                // AVAudioConverter's multichannel downmix yields silence — so we
+                // take channel 0 and convert that mono stream to 16 kHz.
+                let mono = AVAudioFormat(commonFormat: .pcmFormatFloat32,
+                                         sampleRate: inRate, channels: 1, interleaved: false)!
+                monoInFormat = mono
+                converter = AVAudioConverter(from: mono, to: mic16k)
                 engine.inputNode.installTap(onBus: 0, bufferSize: 1024, format: inFormat) {
                     [weak self] buffer, _ in self?.handleMic(buffer)
                 }
@@ -72,26 +81,42 @@ final class AudioEngine {
     func stopListening() { isListening = false; onLevel?(0) }
 
     private func handleMic(_ input: AVAudioPCMBuffer) {
-        guard let out = convert16k(input), let ch = out.int16ChannelData else { return }
-        let n = Int(out.frameLength)
+        guard let chans = input.floatChannelData, let monoFmt = monoInFormat else { return }
+        let n = Int(input.frameLength)
+        let nc = Int(input.format.channelCount)
         guard n > 0 else { return }
 
-        // RMS for the orb
+        // Mono buffer from channel 0 (the processed near-end mic).
+        guard let mono = AVAudioPCMBuffer(pcmFormat: monoFmt, frameCapacity: AVAudioFrameCount(n))
+        else { return }
+        mono.frameLength = AVAudioFrameCount(n)
+        let md = mono.floatChannelData![0]
+        for i in 0..<n { md[i] = chans[0][i] }
+
+        guard let out = convert16k(mono), let ch = out.int16ChannelData else { return }
+        let m = Int(out.frameLength)
+        guard m > 0 else { return }
+
         var sum: Float = 0
-        for i in 0..<n { let s = Float(ch[0][i]); sum += s * s }
-        let rms = (sum / Float(n)).squareRoot() / 32768.0
+        for i in 0..<m { let s = Float(ch[0][i]); sum += s * s }
+        let rms = (sum / Float(m)).squareRoot() / 32768.0
         let listening = isListening
         DispatchQueue.main.async { self.onLevel?(listening ? min(rms * 4, 1) : 0) }
 
         guard listening else { return }
         sent += 1
         if sent % 50 == 0 {
-            print(String(format: "[mic] %d buffers, rms=%.3f, in=%dch/%.0fHz->16k n=%d",
-                         sent, rms, Int(input.format.channelCount),
-                         input.format.sampleRate, n))
+            // per-channel raw RMS so we can see which channel carries the mic
+            var parts: [String] = []
+            for c in 0..<nc {
+                var s: Float = 0
+                for i in 0..<n { let v = chans[c][i]; s += v * v }
+                parts.append(String(format: "%.3f", (s / Float(n)).squareRoot()))
+            }
+            print("[mic] \(sent) buf out-rms=\(String(format: "%.3f", rms)) raw[\(parts.joined(separator: " "))]")
         }
-        ch[0].withMemoryRebound(to: UInt8.self, capacity: n * 2) {
-            pending.append($0, count: n * 2)
+        ch[0].withMemoryRebound(to: UInt8.self, capacity: m * 2) {
+            pending.append($0, count: m * 2)
         }
         while pending.count >= frameBytes {
             onMicFrame?(pending.prefix(frameBytes))
