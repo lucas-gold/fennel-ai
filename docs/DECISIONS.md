@@ -83,3 +83,19 @@ The app's Python is inference/orchestration glue, which is not the "AI
 Python" employers hire for. The hireable work (QLoRA fine-tuning, dataset
 building, held-out evals — reference Phase 4) lives in a **separate
 `training/` pipeline**, kept distinct from the shipped app.
+
+---
+
+## D-LATENCY — STT model reversed to small.en (measured, not assumed)
+
+Reference D9 picked whisper-large-v3-turbo for accuracy, assuming "STT is fast."
+Measured on this Mac it was **2.2 s** — the dominant turn latency by far, because
+Whisper pads every clip to a 30 s window so cost is ~constant regardless of
+utterance length. Benchmarked alternatives on a clean clip (all transcribed it
+correctly): turbo 2291 ms, turbo-q4 2446 ms, **small.en 300 ms**, base.en 92 ms,
+tiny.en 54 ms. Switched to `whisper-small.en-mlx`: 7x faster for no visible
+accuracy loss on conversational English. base.en is the lever if we want more.
+
+Also this pass: END_SILENCE_MS 500→350 (turn-taking), first clause 30→18 chars,
+and startup warmup of all three models (moves cold-start off turn 1). Net
+reply-after-you-stop ≈ 3.5 s → 1.3 s.

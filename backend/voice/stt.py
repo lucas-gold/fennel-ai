@@ -21,7 +21,9 @@ class WhisperSTT:
 
     def transcribe(self, audio_16k_f32: np.ndarray) -> str:
         result = mlx_whisper.transcribe(
-            audio_16k_f32, path_or_hf_repo=self._model_id
+            audio_16k_f32, path_or_hf_repo=self._model_id,
+            temperature=0.0,                  # skip temperature-fallback retries
+            condition_on_previous_text=False,
         )
         return result["text"].strip()
 

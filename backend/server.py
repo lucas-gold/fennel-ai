@@ -59,7 +59,10 @@ async def main() -> None:
     _llm = await asyncio.to_thread(LLM)
     _tts = await asyncio.to_thread(KokoroTTS)
     _stt = WhisperSTT()
-    await asyncio.to_thread(_stt.warmup)  # prime whisper so turn 1 is fast
+    print("warming models …", flush=True)  # move cold-start cost off turn 1
+    await asyncio.to_thread(_stt.warmup)
+    await asyncio.to_thread(_tts.warmup)
+    await asyncio.to_thread(_llm.warmup)
     print(f"my_ai backend listening on ws://{config.HOST}:{config.PORT}  "
           f"(tier={config.TIER})", flush=True)
     async with websockets.serve(handler, config.HOST, config.PORT, max_size=None):

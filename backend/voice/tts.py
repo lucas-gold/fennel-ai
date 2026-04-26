@@ -100,3 +100,7 @@ class KokoroTTS:
             return np.zeros(0, dtype=np.int16)
         a = self._synth(text)
         return (np.clip(a, -1.0, 1.0) * 32767.0).astype(np.int16)
+
+    def warmup(self) -> None:
+        """Load the G2P pipeline + Metal kernels so the first real clause is fast."""
+        self.synth_pcm("Hello there.")
