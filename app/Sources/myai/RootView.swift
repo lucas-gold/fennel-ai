@@ -25,17 +25,32 @@ private struct HomePanel: View {
                     .font(.caption).foregroundStyle(.secondary)
             }
 
-            Spacer()
             VoiceOrb(state: chat.state, listening: chat.listening, level: chat.level)
                 .onTapGesture { chat.toggleListening() }
             Text(chat.listening ? "Listening — tap to stop"
                                 : (chat.state == .idle ? "Tap to talk" : chat.state.label))
                 .font(.callout).foregroundStyle(.secondary)
-            Spacer()
 
-            Text("Reminders, calendar, and pinned panels will appear here (Stage 3).")
-                .font(.footnote).foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            Divider()
+
+            if chat.cards.isEmpty {
+                Spacer()
+                Text("Ask for a reminder, an event, or a list — it shows up here.")
+                    .font(.footnote).foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                Spacer()
+            } else {
+                ScrollView {
+                    LazyVStack(spacing: 8) {
+                        ForEach(chat.cards) { card in
+                            HomeCardView(card: card) {
+                                withAnimation(.easeOut(duration: 0.15)) { chat.dismiss(card) }
+                            }
+                        }
+                    }
+                    .padding(.vertical, 2)
+                }
+            }
         }
         .padding()
         .frame(maxWidth: .infinity, maxHeight: .infinity)

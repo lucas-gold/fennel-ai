@@ -55,12 +55,19 @@ and capture works; (2) AEC actually prevents self-interruption (D6); (3) barge-i
 stops playback + LLM within ~100 ms. Run: `./scripts/build-app.sh` then open the
 app with the backend running.
 
-## Stage 3 — Reactive home + tools + EventKit
+## Stage 3 — Reactive home + tools + EventKit  ✓ DONE
 
-- Python: tool-calling loop emitting `setReminder`/`addEvent`/`showPanel`/
-  `setFact` over WS (reference Phase 2).
-- Swift: `HomeStore` (@Observable), dismissible cards, EventKit permission +
-  real Reminders/Calendar writes.
+- Python `voice/tools.py` — four tools (`set_reminder`, `add_event`,
+  `show_panel`, `set_fact`) as JSON Schema handed to the chat template, so the
+  signatures live in the *stable* prefix (one prefill per session, not per turn).
+  `ToolStream` splits `<tool_call>` blocks out of the stream before TTS sees
+  them; `normalize()` turns model arguments into absolute local times.
+- `session.py` — LLM → tool → LLM loop, capped at `LLM_TOOL_ROUNDS`. Calls fire
+  the instant they close, so the card lands while the model is still talking.
+- Swift `HomeCards.swift` + `EventKitBridge.swift` — dismissible cards and real
+  Reminders/Calendar writes; the app reports the outcome back as `tool_result`
+  so the spoken confirmation is truthful about failures.
+- `set_fact` is session-scoped for now; Stage 4 gives it a durable store.
 
 ## Stage 4 — Memory
 

@@ -99,3 +99,56 @@ accuracy loss on conversational English. base.en is the lever if we want more.
 Also this pass: END_SILENCE_MS 500→350 (turn-taking), first clause 30→18 chars,
 and startup warmup of all three models (moves cold-start off turn 1). Net
 reply-after-you-stop ≈ 3.5 s → 1.3 s.
+
+---
+
+## D-TOOLS — Native Hermes tool calls, split out of the stream
+
+Tools use the model's own `<tool_call>` format via the tokenizer's `tools=`
+argument, not a hand-rolled `⟦tool:…⟧` syntax. Qwen3 was trained on it, so
+reliability comes free, and the template puts the signatures in the **system
+block** — the stable prefix — so tool calling costs one prefill per session
+rather than one per turn (D4).
+
+Three consequences worth writing down:
+
+- **Tool syntax must never reach TTS.** `ToolStream` splits the stream into
+  prose and call blocks, holding back any trailing partial `<tool_ca…` so a
+  half-arrived tag is never spoken. Calls fire the instant they close, so the
+  home card appears *while the model is still talking* — the card, not the
+  sentence, is the real feedback (measured: card at 1.7 s, speech at 2.7 s).
+- **History stores the generation verbatim**, tags and all, instead of a
+  structured `tool_calls` field. Re-rendering structured calls re-tokenizes
+  with different whitespace and silently costs a re-prefill.
+- **Skip the follow-up round when the model already spoke.** Qwen puts its call
+  last, so prose in that pass was already a confirmation; saying it twice is
+  the most annoying failure mode in a voice UI, and skipping removes a whole
+  generation from the critical path. A *failed* tool still gets its round, so
+  the model can correct itself out loud.
+
+The real side effect lives in Swift (`EventKitBridge`), never in Python. The
+backend only normalizes arguments into absolute local times; the app writes to
+EventKit and reports back as `tool_result`, and the backend waits up to
+`TOOL_APP_TIMEOUT_S` for that verdict — so "I couldn't, Reminders access is
+off" is something the model actually knows rather than guesses.
+
+---
+
+## D-PREFIX — Prime the stable prefix at startup; the clock rides last
+
+Adding tool schemas grew the prefix from ~25 to ~940 tokens. This M2 prefills at
+only ~200 tok/s, so the first turn of every session suddenly cost **4.7 s** of
+silence. Two fixes, both straight applications of D4:
+
+1. `LLM.prime()` prefills that prefix once during startup warmup, and `reset()`
+   now *trims back to* it instead of discarding it — so a new session (or a
+   barge-in cache reset) keeps it. First turn: **4.88 s → 0.40 s**.
+2. Priming only works if the prefix is byte-identical every session, so the
+   system prompt can no longer contain the current time. It carries the date
+   plus a 7-day table (stable all day); the **clock rides on each user message**
+   as a `[6:25 PM]` prefix — volatile content last, exactly where D4 wants it,
+   and a past turn's stamp never changes so history stays cacheable.
+
+The day table is not padding: a 4-bit 4B model handles clock arithmetic fine but
+miscounts weekdays ("next Wednesday" landed five days late). Looking a date up
+beats computing it.

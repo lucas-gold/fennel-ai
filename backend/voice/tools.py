@@ -1,0 +1,304 @@
+"""Tool-calling layer (Stage 3 / D-HOME).
+
+Three pieces:
+
+  1. `TOOLS` — JSON-Schema function signatures handed to the tokenizer's chat
+     template. Qwen renders them into the system block, so they sit in the
+     STABLE prefix and cost one prefill per session, never per turn (D4).
+  2. `ToolStream` — splits the streamed reply into speakable prose and
+     `<tool_call>` blocks, so tool syntax is never spoken or shown.
+  3. `normalize` — validates/normalizes arguments into a card payload the app
+     can render and act on. The actual side effect (EventKit) happens in Swift;
+     the backend only ever normalizes and describes.
+"""
+from __future__ import annotations
+
+import json
+import re
+from datetime import datetime, timedelta
+from typing import Any, Optional
+
+# The model emits Hermes-style calls: <tool_call>{"name":…,"arguments":{…}}</tool_call>
+_OPEN, _CLOSE = "<tool_call>", "</tool_call>"
+
+TOOLS: list[dict] = [
+    {
+        "type": "function",
+        "function": {
+            "name": "set_reminder",
+            "description": (
+                "Create a reminder in the user's Reminders app. Use whenever "
+                "they ask to be reminded of something or to remember a task."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "title": {"type": "string", "description": "What to be reminded of."},
+                    "due": {
+                        "type": "string",
+                        "description": "When, as ISO 8601 local time, e.g. 2026-08-24T18:00. Omit if unspecified.",
+                    },
+                    "notes": {"type": "string", "description": "Optional extra detail."},
+                },
+                "required": ["title"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "add_event",
+            "description": (
+                "Add an event to the user's calendar. Use for anything with a "
+                "specific time they will attend: meetings, appointments, plans."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "title": {"type": "string"},
+                    "start": {
+                        "type": "string",
+                        "description": "Start, ISO 8601 local time, e.g. 2026-08-24T15:30.",
+                    },
+                    "end": {
+                        "type": "string",
+                        "description": "End, ISO 8601. Defaults to one hour after start.",
+                    },
+                    "location": {"type": "string"},
+                },
+                "required": ["title", "start"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "show_panel",
+            "description": (
+                "Display a card on the user's home screen and keep it there. "
+                "You DO have a screen — use this whenever the user asks to see, "
+                "show, or be given a list, steps, options, or a summary, and "
+                "whenever something is worth keeping in front of them. Put the "
+                "content in the card; then say one short sentence out loud."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "title": {"type": "string"},
+                    "body": {"type": "string", "description": "Short paragraph."},
+                    "items": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Optional bullet list.",
+                    },
+                },
+                "required": ["title"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "set_fact",
+            "description": (
+                "Remember a durable fact about the user (preferences, names, "
+                "routines). Not for one-off chatter."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "key": {"type": "string", "description": "Short slug, e.g. coffee_order."},
+                    "value": {"type": "string"},
+                },
+                "required": ["key", "value"],
+            },
+        },
+    },
+]
+
+TOOL_NAMES = {t["function"]["name"] for t in TOOLS}
+
+
+# ── streaming split ────────────────────────────────────────────────────────
+
+
+def _held(buf: str, tag: str) -> int:
+    """Length of the trailing slice of `buf` that could still grow into `tag`."""
+    for n in range(min(len(buf), len(tag) - 1), 0, -1):
+        if buf.endswith(tag[:n]):
+            return n
+    return 0
+
+
+class ToolStream:
+    """Feed streamed chunks; get back only the prose that should be spoken,
+    plus any tool calls that completed in this chunk (fired immediately so the
+    home card appears while the model is still talking)."""
+
+    def __init__(self) -> None:
+        self._buf = ""
+        self._in_call = False
+        self.raw = ""       # everything the model produced, verbatim
+
+    def feed(self, chunk: str) -> tuple[str, list[dict]]:
+        self.raw += chunk
+        self._buf += chunk
+        prose: list[str] = []
+        calls: list[dict] = []
+        while True:
+            if self._in_call:
+                i = self._buf.find(_CLOSE)
+                if i == -1:
+                    break
+                body, self._buf = self._buf[:i], self._buf[i + len(_CLOSE):]
+                self._in_call = False
+                if (call := _parse_call(body)) is not None:
+                    calls.append(call)
+            else:
+                i = self._buf.find(_OPEN)
+                if i == -1:
+                    # Hold back a partial "<tool_ca…" so it is never spoken.
+                    keep = _held(self._buf, _OPEN)
+                    prose.append(self._buf[:len(self._buf) - keep] if keep else self._buf)
+                    self._buf = self._buf[len(self._buf) - keep:] if keep else ""
+                    break
+                prose.append(self._buf[:i])
+                self._buf = self._buf[i + len(_OPEN):]
+                self._in_call = True
+        return "".join(prose), calls
+
+    def flush(self) -> tuple[str, list[dict]]:
+        """End of generation: emit the tail (a truncated call is discarded)."""
+        if self._in_call:
+            body, self._buf, self._in_call = self._buf, "", False
+            call = _parse_call(body)
+            return "", [call] if call else []
+        out, self._buf = self._buf, ""
+        return out, []
+
+
+def _parse_call(body: str) -> Optional[dict]:
+    try:
+        obj = json.loads(body.strip())
+    except json.JSONDecodeError:
+        print(f"[tool] unparseable call: {body.strip()[:120]!r}", flush=True)
+        return None
+    name = obj.get("name")
+    if name not in TOOL_NAMES:
+        print(f"[tool] unknown tool: {name!r}", flush=True)
+        return None
+    args = obj.get("arguments")
+    return {"name": name, "args": args if isinstance(args, dict) else {}}
+
+
+# ── argument normalization ─────────────────────────────────────────────────
+
+
+def _parse_dt(value: Any) -> Optional[datetime]:
+    """Lenient ISO 8601. The model is reliable about the shape but not the
+    trimmings (trailing Z, a space instead of T, a missing seconds field)."""
+    if not isinstance(value, str) or not value.strip():
+        return None
+    s = value.strip().replace(" ", "T").rstrip("Z")
+    s = re.sub(r"[+-]\d{2}:?\d{2}$", "", s)   # drop any offset; we mean local time
+    try:
+        return datetime.fromisoformat(s)
+    except ValueError:
+        return None
+
+
+def human_time(dt: datetime, now: Optional[datetime] = None) -> str:
+    now = now or datetime.now()
+    clock = dt.strftime("%-I:%M %p").lower().replace(":00 ", " ")
+    days = (dt.date() - now.date()).days
+    if days == 0:
+        return f"today at {clock}"
+    if days == 1:
+        return f"tomorrow at {clock}"
+    if 0 < days < 7:
+        return f"{dt.strftime('%A')} at {clock}"
+    return f"{dt.strftime('%b %-d')} at {clock}"
+
+
+def normalize(name: str, args: dict) -> tuple[dict, dict]:
+    """→ (card_args, tool_result). `card_args` is what the app renders and acts
+    on; `tool_result` is what the model reads before it speaks, so it must
+    describe what will *actually* happen, not what was asked for."""
+    now = datetime.now()
+
+    if name == "set_reminder":
+        title = str(args.get("title", "")).strip() or "Reminder"
+        due = _parse_dt(args.get("due"))
+        card = {"title": title, "notes": str(args.get("notes", "")).strip() or None,
+                "due": due.isoformat() if due else None}
+        result = {"ok": True, "title": title,
+                  "due": human_time(due, now) if due else "no time set"}
+        return card, result
+
+    if name == "add_event":
+        title = str(args.get("title", "")).strip() or "Event"
+        start = _parse_dt(args.get("start"))
+        if start is None:
+            return {}, {"ok": False,
+                        "error": "start time missing or unparseable; ask the user when"}
+        end = _parse_dt(args.get("end")) or start + timedelta(hours=1)
+        if end <= start:
+            end = start + timedelta(hours=1)
+        card = {"title": title, "start": start.isoformat(), "end": end.isoformat(),
+                "location": str(args.get("location", "")).strip() or None}
+        result = {"ok": True, "title": title, "start": human_time(start, now)}
+        return card, result
+
+    if name == "show_panel":
+        title = str(args.get("title", "")).strip() or "Note"
+        items = args.get("items")
+        card = {"title": title,
+                "body": str(args.get("body", "")).strip() or None,
+                "items": [str(i) for i in items] if isinstance(items, list) else None}
+        return card, {"ok": True, "shown": title}
+
+    if name == "set_fact":
+        key = str(args.get("key", "")).strip()
+        value = str(args.get("value", "")).strip()
+        if not key or not value:
+            return {}, {"ok": False, "error": "key and value are both required"}
+        return {"key": key, "value": value}, {"ok": True, "remembered": f"{key}: {value}"}
+
+    return {}, {"ok": False, "error": f"unknown tool {name}"}
+
+
+def stamp(text: str, now: Optional[datetime] = None) -> str:
+    """Timestamp a user message. The clock is the one genuinely volatile input,
+    so it rides on the message — last in the prompt, never in the prefix (D4) —
+    and because a past turn's stamp never changes, history stays cacheable."""
+    return f"[{(now or datetime.now()).strftime('%-I:%M %p')}] {text}"
+
+
+def system_prompt(base: str, now: Optional[datetime] = None) -> str:
+    """Base persona + dates + tool etiquette. Deliberately free of the clock so
+    it is byte-identical all day: the server prefills it once at startup and
+    every session reuses it (see LLM.prime), instead of paying ~4.7 s each.
+
+    The explicit day table is not padding: a 4-bit 4B model reliably gets clock
+    arithmetic right but miscounts weekdays ("next Wednesday" landed five days
+    late), and looking the date up beats computing it."""
+    now = now or datetime.now()
+    days = "\n".join(
+        f"  {(now + timedelta(days=i)).strftime('%A %Y-%m-%d')}"
+        f"{'  (today)' if i == 0 else '  (tomorrow)' if i == 1 else ''}"
+        for i in range(8)
+    )
+    return (
+        f"{base}\n\n"
+        "Dates:\n"
+        f"{days}\n"
+        "Every user message begins with the current clock time in square "
+        "brackets. Use it to resolve relative times; never say it back. "
+        "Resolve dates against the table above and always pass absolute "
+        "ISO 8601 local times to tools.\n\n"
+        "Tools are extra abilities, not your only ones — answer normally when "
+        "the user just wants an answer, and call a tool only when they want "
+        "that action taken. Do not announce a tool before calling it: call it, "
+        "then confirm once, in one short spoken sentence. You are told whether "
+        "it actually worked. Never read out tool syntax, JSON, or raw timestamps."
+    )

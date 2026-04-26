@@ -8,6 +8,7 @@ chat box still works and now also speaks its reply.
 from __future__ import annotations
 
 import asyncio
+from datetime import date
 
 import numpy as np
 import websockets
@@ -17,11 +18,24 @@ import protocol as P
 from voice.llm import LLM
 from voice.session import Session
 from voice.stt import WhisperSTT
+from voice.tools import system_prompt
 from voice.tts import KokoroTTS
 
 _stt: WhisperSTT
 _llm: LLM
 _tts: KokoroTTS
+_system: str
+_system_day: date
+
+
+def _current_system() -> str:
+    """The primed system prefix, re-primed if the app has been left running
+    past midnight (the prompt's day table would otherwise be wrong)."""
+    global _system, _system_day
+    if date.today() != _system_day:
+        _system, _system_day = system_prompt(config.LLM_SYSTEM), date.today()
+        _llm.prime(_system)
+    return _system
 
 
 async def handler(ws) -> None:
@@ -31,7 +45,8 @@ async def handler(ws) -> None:
     async def send_audio(b: bytes) -> None:
         await ws.send(b)
 
-    session = Session(send_control, send_audio, _stt, _llm, _tts)
+    session = Session(send_control, send_audio, _stt, _llm, _tts,
+                      system=_current_system())
     await ws.send(P.encode("state", value="idle"))
     try:
         async for raw in ws:
@@ -44,6 +59,8 @@ async def handler(ws) -> None:
                 if msg["type"] == "user_text":
                     await session.feed_text(msg.get("text", ""),
                                             speak=bool(msg.get("speak", False)))
+                elif msg["type"] == "tool_result":
+                    session.feed_tool_result(msg)
                 elif msg["type"] == "ping":
                     await ws.send(P.encode("pong"))
     finally:
@@ -51,7 +68,7 @@ async def handler(ws) -> None:
 
 
 async def main() -> None:
-    global _stt, _llm, _tts
+    global _stt, _llm, _tts, _system, _system_day
     print("loading models "
           f"({config.LLM_MODEL.split('/')[-1]}, "
           f"{config.STT_MODEL.split('/')[-1]}, "
@@ -63,6 +80,10 @@ async def main() -> None:
     await asyncio.to_thread(_stt.warmup)
     await asyncio.to_thread(_tts.warmup)
     await asyncio.to_thread(_llm.warmup)
+    # Prefill the tool schemas + day table now rather than during the user's
+    # first sentence — it is ~640 tokens of stable prefix (D4).
+    _system, _system_day = system_prompt(config.LLM_SYSTEM), date.today()
+    await asyncio.to_thread(_llm.prime, _system)
     print(f"my_ai backend listening on ws://{config.HOST}:{config.PORT}  "
           f"(tier={config.TIER})", flush=True)
     async with websockets.serve(handler, config.HOST, config.PORT, max_size=None):
