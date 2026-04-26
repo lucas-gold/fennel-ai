@@ -99,6 +99,27 @@ TOOLS: list[dict] = [
     {
         "type": "function",
         "function": {
+            "name": "recommend_song",
+            "description": (
+                "Show a song you are recommending as a playable card, with "
+                "buttons that open it in Apple Music or Spotify. Use this "
+                "whenever you name a specific song the user might want to hear. "
+                "One call per song; call it up to three times for a short list."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "title": {"type": "string", "description": "Song title only."},
+                    "artist": {"type": "string"},
+                    "why": {"type": "string", "description": "One short line on why it fits."},
+                },
+                "required": ["title", "artist"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "set_fact",
             "description": (
                 "Remember a durable fact about the user (preferences, names, "
@@ -256,6 +277,15 @@ def normalize(name: str, args: dict) -> tuple[dict, dict]:
                 "body": str(args.get("body", "")).strip() or None,
                 "items": [str(i) for i in items] if isinstance(items, list) else None}
         return card, {"ok": True, "shown": title}
+
+    if name == "recommend_song":
+        title = str(args.get("title", "")).strip()
+        artist = str(args.get("artist", "")).strip()
+        if not title or not artist:
+            return {}, {"ok": False, "error": "both title and artist are required"}
+        card = {"title": title, "artist": artist,
+                "why": str(args.get("why", "")).strip() or None}
+        return card, {"ok": True, "shown": f"{title} by {artist}"}
 
     if name == "set_fact":
         key = str(args.get("key", "")).strip()

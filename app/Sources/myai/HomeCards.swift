@@ -8,6 +8,7 @@ struct HomeCard: Identifiable {
         case event = "add_event"
         case panel = "show_panel"
         case fact = "set_fact"
+        case song = "recommend_song"
 
         var icon: String {
             switch self {
@@ -15,6 +16,7 @@ struct HomeCard: Identifiable {
             case .event: return "calendar"
             case .panel: return "square.text.square"
             case .fact: return "brain"
+            case .song: return "music.note"
             }
         }
 
@@ -24,14 +26,19 @@ struct HomeCard: Identifiable {
             case .event: return .blue
             case .panel: return .purple
             case .fact: return .teal
+            case .song: return .pink
             }
         }
+
+        /// Kinds backed by a real entry outside the app, which dismissing must
+        /// therefore delete rather than just hide.
+        var writesToEventKit: Bool { self == .reminder || self == .event }
     }
 
     /// Whether the real-world write actually landed. Shown on the card so a
     /// permission failure is visible, not just spoken once and lost.
     enum Status: Equatable {
-        case working, done, failed(String)
+        case working, done, failed(String), deleted
     }
 
     let id: String
@@ -41,12 +48,17 @@ struct HomeCard: Identifiable {
     var body: String?
     var items: [String] = []
     var status: Status = .working
+    /// The EventKit identifier once written, so ✕ can remove the real entry.
+    var externalID: String?
+    /// The normalized tool arguments, kept so Undo can re-create the entry.
+    let args: [String: Any]
 
     /// Build from a `tool` control frame. Returns nil for a tool with no card.
     init?(id: String, name: String, args: [String: Any]) {
         guard let kind = Kind(rawValue: name) else { return nil }
         self.id = id
         self.kind = kind
+        self.args = args
         switch kind {
         case .reminder:
             title = args["title"] as? String ?? "Reminder"
@@ -66,7 +78,22 @@ struct HomeCard: Identifiable {
             title = args["value"] as? String ?? ""
             subtitle = "Remembered"
             status = .done
+        case .song:
+            title = args["title"] as? String ?? ""
+            subtitle = args["artist"] as? String
+            body = args["why"] as? String
+            status = .done
         }
+    }
+
+    /// Search URL for the streaming services. Both are universal links, so they
+    /// open the native app when it's installed and the web player otherwise.
+    func musicURL(_ host: String) -> URL? {
+        let q = "\(title) \(subtitle ?? "")"
+            .addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? ""
+        return URL(string: host == "spotify"
+                   ? "https://open.spotify.com/search/\(q)"
+                   : "https://music.apple.com/search?term=\(q)")
     }
 
     private static func when(_ date: Date) -> String {
@@ -81,8 +108,29 @@ struct HomeCard: Identifiable {
 struct HomeCardView: View {
     let card: HomeCard
     let onDismiss: () -> Void
+    var onUndo: () -> Void = {}
 
     var body: some View {
+        if card.status == .deleted { deletedStrip } else { full }
+    }
+
+    /// A dismissed reminder/event is really gone from Reminders/Calendar, so it
+    /// leaves an undo behind rather than vanishing on one stray click.
+    private var deletedStrip: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "trash").font(.caption2).foregroundStyle(.secondary)
+            Text("Deleted “\(card.title)”")
+                .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+            Spacer(minLength: 0)
+            Button("Undo", action: onUndo).buttonStyle(.plain)
+                .font(.caption.weight(.semibold)).foregroundStyle(Color.accentColor)
+        }
+        .padding(.horizontal, 10).padding(.vertical, 7)
+        .background(Color.gray.opacity(0.10))
+        .clipShape(RoundedRectangle(cornerRadius: 9))
+    }
+
+    private var full: some View {
         HStack(alignment: .top, spacing: 10) {
             Image(systemName: card.kind.icon)
                 .foregroundStyle(card.kind.tint)
@@ -105,6 +153,7 @@ struct HomeCardView: View {
                     }
                     .padding(.top, 2)
                 }
+                if card.kind == .song { musicButtons }
                 statusLine
             }
 
@@ -128,11 +177,27 @@ struct HomeCardView: View {
         .transition(.move(edge: .top).combined(with: .opacity))
     }
 
+    /// Handing off to Music/Spotify is the one thing in the app that leaves the
+    /// machine — hence a button the user presses, never an automatic open.
+    @ViewBuilder private var musicButtons: some View {
+        HStack(spacing: 6) {
+            if let url = card.musicURL("apple") {
+                Link("Apple Music", destination: url)
+            }
+            if let url = card.musicURL("spotify") {
+                Link("Spotify", destination: url)
+            }
+        }
+        .font(.caption2.weight(.medium))
+        .buttonStyle(.plain)
+        .padding(.top, 4)
+    }
+
     @ViewBuilder private var statusLine: some View {
         switch card.status {
         case .working:
             Text("Adding…").font(.caption2).foregroundStyle(.secondary)
-        case .done:
+        case .done, .deleted:
             EmptyView()
         case .failed(let why):
             Label(why, systemImage: "exclamationmark.triangle.fill")

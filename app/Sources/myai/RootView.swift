@@ -43,9 +43,9 @@ private struct HomePanel: View {
                 ScrollView {
                     LazyVStack(spacing: 8) {
                         ForEach(chat.cards) { card in
-                            HomeCardView(card: card) {
+                            HomeCardView(card: card, onDismiss: {
                                 withAnimation(.easeOut(duration: 0.15)) { chat.dismiss(card) }
-                            }
+                            }, onUndo: { chat.undoDelete(card) })
                         }
                     }
                     .padding(.vertical, 2)

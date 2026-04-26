@@ -32,19 +32,25 @@ def speakable(text: str) -> str:
 
 
 class ClauseSplitter:
-    """Cut the first speakable fragment aggressively (~30 chars) to minimise
-    time-to-first-audio, then use longer spans (~90) for better prosody once
-    audio is already playing. A hard sentence end always cuts regardless of
-    length, so "Sure." goes out immediately (D5)."""
+    """Cut the first speakable fragment aggressively (~18 chars) to minimise
+    time-to-first-audio, then ramp to longer spans (~45, then ~90) for better
+    prosody once audio is already playing. A hard sentence end always cuts
+    regardless of length, so "Sure." goes out immediately (D5).
+
+    The ramp is what keeps playback continuous: each clause has to be long
+    enough to cover synthesising the next one, and jumping straight from 18 to
+    90 chars left an audible gap about a second into every reply."""
 
     def __init__(self, first: int = config.CLAUSE_FIRST_CHARS,
+                 second: int = config.CLAUSE_SECOND_CHARS,
                  rest: int = config.CLAUSE_REST_CHARS) -> None:
-        self._first, self._rest = first, rest
+        self._steps = [first, second]
+        self._rest = rest
         self._buf = ""
-        self._is_first = True
+        self._n = 0            # clauses emitted so far
 
     def _threshold(self) -> int:
-        return self._first if self._is_first else self._rest
+        return self._steps[self._n] if self._n < len(self._steps) else self._rest
 
     def feed(self, text: str) -> list[str]:
         """Add streamed text; return any clauses that are now complete."""
@@ -52,7 +58,7 @@ class ClauseSplitter:
         out: list[str] = []
         while (clause := self._try_cut()) is not None:
             out.append(clause)
-            self._is_first = False
+            self._n += 1
         return out
 
     def _try_cut(self) -> Optional[str]:
@@ -73,7 +79,7 @@ class ClauseSplitter:
         """Emit whatever is left (end of reply)."""
         clause, self._buf = self._buf.strip(), ""
         if clause:
-            self._is_first = False
+            self._n += 1
         return clause
 
 

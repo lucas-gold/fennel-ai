@@ -100,8 +100,48 @@ final class ChatModel: ObservableObject {
         }
     }
 
+    /// ✕ on a reminder/event deletes the real Reminders/Calendar entry too —
+    /// the card *is* the reminder. Because that's destructive on a one-click
+    /// gesture, it leaves an Undo behind instead of vanishing.
     func dismiss(_ card: HomeCard) {
-        cards.removeAll { $0.id == card.id }
+        guard card.kind.writesToEventKit, let ext = card.externalID else {
+            cards.removeAll { $0.id == card.id }
+            return
+        }
+        Task {
+            do {
+                switch card.kind {
+                case .reminder: try await EventKitBridge.deleteReminder(id: ext)
+                case .event:    try await EventKitBridge.deleteEvent(id: ext)
+                default:        break
+                }
+                setStatus(card.id, .deleted)
+                try? await Task.sleep(for: .seconds(6))
+                if cards.first(where: { $0.id == card.id })?.status == .deleted {
+                    withAnimation(.easeOut(duration: 0.15)) {
+                        cards.removeAll { $0.id == card.id }
+                    }
+                }
+            } catch {
+                setStatus(card.id, .failed("Couldn't delete: \(error.localizedDescription)"))
+            }
+        }
+    }
+
+    func undoDelete(_ card: HomeCard) {
+        guard let i = cards.firstIndex(where: { $0.id == card.id }) else { return }
+        cards[i].status = .working
+        Task {
+            do {
+                let ext = try await performWrite(card)
+                if let j = cards.firstIndex(where: { $0.id == card.id }) {
+                    cards[j].externalID = ext
+                    cards[j].status = .done
+                }
+            } catch {
+                setStatus(card.id, .failed(error.localizedDescription))
+            }
+        }
     }
 
     // MARK: - tool calls (Stage 3)
@@ -120,31 +160,40 @@ final class ChatModel: ObservableObject {
 
         Task {
             do {
-                switch card.kind {
-                case .reminder:
-                    try await EventKitBridge.addReminder(
-                        title: card.title,
-                        due: EventKitBridge.parseDate(args["due"] as? String),
-                        notes: args["notes"] as? String)
-                case .event:
-                    guard let start = EventKitBridge.parseDate(args["start"] as? String) else {
-                        throw EventKitBridge.DeniedError(what: "Calendar")
-                    }
-                    let end = EventKitBridge.parseDate(args["end"] as? String)
-                        ?? start.addingTimeInterval(3600)
-                    try await EventKitBridge.addEvent(
-                        title: card.title, start: start, end: end,
-                        location: args["location"] as? String)
-                case .panel, .fact:
-                    break               // the card itself is the whole effect
+                let ext = try await performWrite(card)
+                if let i = cards.firstIndex(where: { $0.id == id }) {
+                    cards[i].externalID = ext
+                    cards[i].status = .done
                 }
-                setStatus(id, .done)
                 reply(id, ok: true, error: nil)
             } catch {
                 let why = error.localizedDescription
                 setStatus(id, .failed(why))
                 reply(id, ok: false, error: why)
             }
+        }
+    }
+
+    /// The real side effect, shared by the first write and by Undo.
+    /// Returns the EventKit identifier where there is one.
+    private func performWrite(_ card: HomeCard) async throws -> String? {
+        switch card.kind {
+        case .reminder:
+            return try await EventKitBridge.addReminder(
+                title: card.title,
+                due: EventKitBridge.parseDate(card.args["due"] as? String),
+                notes: card.args["notes"] as? String)
+        case .event:
+            guard let start = EventKitBridge.parseDate(card.args["start"] as? String) else {
+                throw EventKitBridge.DeniedError(what: "Calendar")
+            }
+            let end = EventKitBridge.parseDate(card.args["end"] as? String)
+                ?? start.addingTimeInterval(3600)
+            return try await EventKitBridge.addEvent(
+                title: card.title, start: start, end: end,
+                location: card.args["location"] as? String)
+        case .panel, .fact, .song:
+            return nil                  // the card itself is the whole effect
         }
     }
 

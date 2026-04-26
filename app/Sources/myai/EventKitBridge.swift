@@ -28,7 +28,10 @@ enum EventKitBridge {
         return nil
     }
 
-    static func addReminder(title: String, due: Date?, notes: String?) async throws {
+    /// → the EventKit identifier, so dismissing the card can remove the real
+    /// entry again (and Undo can put it back).
+    @discardableResult
+    static func addReminder(title: String, due: Date?, notes: String?) async throws -> String {
         guard try await store.requestFullAccessToReminders() else {
             throw DeniedError(what: "Reminders")
         }
@@ -42,9 +45,12 @@ enum EventKitBridge {
             r.addAlarm(EKAlarm(absoluteDate: due))   // a reminder that doesn't fire isn't one
         }
         try store.save(r, commit: true)
+        return r.calendarItemIdentifier
     }
 
-    static func addEvent(title: String, start: Date, end: Date, location: String?) async throws {
+    @discardableResult
+    static func addEvent(title: String, start: Date, end: Date,
+                         location: String?) async throws -> String {
         guard try await store.requestFullAccessToEvents() else {
             throw DeniedError(what: "Calendar")
         }
@@ -55,5 +61,24 @@ enum EventKitBridge {
         e.location = location
         e.calendar = store.defaultCalendarForNewEvents
         try store.save(e, span: .thisEvent, commit: true)
+        return e.eventIdentifier
+    }
+
+    /// Deleting something already gone is success, not an error — the user may
+    /// have removed it in Reminders/Calendar before dismissing the card.
+    static func deleteReminder(id: String) async throws {
+        guard try await store.requestFullAccessToReminders() else {
+            throw DeniedError(what: "Reminders")
+        }
+        guard let item = store.calendarItem(withIdentifier: id) as? EKReminder else { return }
+        try store.remove(item, commit: true)
+    }
+
+    static func deleteEvent(id: String) async throws {
+        guard try await store.requestFullAccessToEvents() else {
+            throw DeniedError(what: "Calendar")
+        }
+        guard let e = store.event(withIdentifier: id) else { return }
+        try store.remove(e, span: .thisEvent, commit: true)
     }
 }
