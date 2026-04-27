@@ -75,10 +75,21 @@ Also fixed here: the mic was open for the whole session (D-MIC), and the clause
 splitter jumped 18→90 chars, which starved playback about a second in — measured
 0.01 s of slack before the next clause arrived, now 0.82 s with a 45-char step.
 
-## Stage 4 — Memory
+## Stage 4 — Memory + persistent chats  ✓ DONE
 
-- Python: `memory.py` — rolling summary + SQLite FTS5 recall + facts table
-  (reference D8). `setFact` tool wired to it.
+- `store.py` — SQLite (WAL) in `~/Library/Application Support/my_ai`: sessions,
+  messages, facts, summaries, and an FTS5 index over messages for recall.
+- `memory.py` — the three prompt inputs, each placed at the depth that matches
+  how often it changes (D-MEMORY): facts + summary in a `<context>` message
+  ahead of the window, recall + clock on the current user message, verbatim
+  turns evicted in chunks.
+- Chats persist across restarts and reconnects; the app gets `sessions` /
+  `session_opened` and can start, switch, close and delete them (D-SESSIONS).
+- Rolling summary runs on a throwaway KV cache via `LLM.complete`, off the
+  turn's critical path, so it can't evict the live conversation's prefix.
+- New tools: `agenda` (reads Reminders + Calendar back — the first tool whose
+  answer comes *from* the app via `tool_result.data`), `set_timer` (on-screen
+  countdown), `open_link` (a button, never an automatic open).
 
 ## Stage 5 — Ship
 

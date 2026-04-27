@@ -76,16 +76,24 @@ final class AudioEngine {
                 engine.inputNode.installTap(onBus: 0, bufferSize: 1024, format: inFormat) {
                     [weak self] buffer, _ in self?.handleMic(buffer)
                 }
+                engine.prepare()
+                try engine.start()
+                // Attach playback AFTER the engine is running. With voice processing
+                // enabled, connecting a player *before* start makes the VP output node
+                // fail to initialise (-10875, which surfaced as a CreateRecordingTap
+                // NSException / SIGABRT). A post-start connect reconfigures cleanly.
+                engine.attach(player)
+                engine.connect(player, to: engine.mainMixerNode, format: tts24k)
+            } else {
+                // The opposite order, and not a style choice: `prepare()` on a graph
+                // with nothing attached raises "inputNode != nullptr || outputNode
+                // != nullptr" — an ObjC exception Swift cannot catch, so the app
+                // dies. Connecting the player first gives the graph its output node.
+                engine.attach(player)
+                engine.connect(player, to: engine.mainMixerNode, format: tts24k)
+                engine.prepare()
+                try engine.start()
             }
-            engine.prepare()
-            try engine.start()
-
-            // Attach playback AFTER the engine is running. With voice processing
-            // enabled, connecting a player *before* start makes the VP output node
-            // fail to initialise (-10875, which surfaced as a CreateRecordingTap
-            // NSException / SIGABRT). A post-start connect reconfigures cleanly.
-            engine.attach(player)
-            engine.connect(player, to: engine.mainMixerNode, format: tts24k)
             player.play()
             mode = want
             print("[audio] mode=\(want) mic=\(mic ? "OPEN" : "closed")")
@@ -132,9 +140,11 @@ final class AudioEngine {
         DispatchQueue.main.async { self.closeMicIfIdle() }
     }
 
+    /// Go all the way to `.off`, not `.playback`: idle should hold no audio
+    /// device at all. `play` spins a playback engine back up on demand.
     private func closeMicIfIdle() {
         guard mode == .voice, !wantMic, queued == 0 else { return }
-        setMode(.playback)
+        setMode(.off)
     }
 
     private func handleMic(_ input: AVAudioPCMBuffer) {

@@ -9,6 +9,9 @@ struct HomeCard: Identifiable {
         case panel = "show_panel"
         case fact = "set_fact"
         case song = "recommend_song"
+        case timer = "set_timer"
+        case agenda = "agenda"
+        case link = "open_link"
 
         var icon: String {
             switch self {
@@ -17,6 +20,9 @@ struct HomeCard: Identifiable {
             case .panel: return "square.text.square"
             case .fact: return "brain"
             case .song: return "music.note"
+            case .timer: return "timer"
+            case .agenda: return "list.bullet.rectangle"
+            case .link: return "safari"
             }
         }
 
@@ -27,6 +33,9 @@ struct HomeCard: Identifiable {
             case .panel: return .purple
             case .fact: return .teal
             case .song: return .pink
+            case .timer: return .red
+            case .agenda: return .indigo
+            case .link: return .cyan
             }
         }
 
@@ -83,8 +92,24 @@ struct HomeCard: Identifiable {
             subtitle = args["artist"] as? String
             body = args["why"] as? String
             status = .done
+        case .timer:
+            title = args["label"] as? String ?? "Timer"
+            endsAt = EventKitBridge.parseDate(args["ends"] as? String)
+            status = .done
+        case .agenda:
+            let range = args["range"] as? String ?? "today"
+            title = ["today": "Today", "tomorrow": "Tomorrow", "week": "This week"][range] ?? "Agenda"
+            subtitle = nil
+        case .link:
+            title = args["label"] as? String ?? "Link"
+            subtitle = URL(string: args["url"] as? String ?? "")?.host
+            status = .done
         }
     }
+
+    /// When a `.timer` card fires. The countdown is drawn from this rather than
+    /// ticked in the model, so it stays correct if the app is busy.
+    var endsAt: Date?
 
     /// Search URL for the streaming services. Both are universal links, so they
     /// open the native app when it's installed and the web player otherwise.
@@ -154,6 +179,14 @@ struct HomeCardView: View {
                     .padding(.top, 2)
                 }
                 if card.kind == .song { musicButtons }
+                if card.kind == .timer, let ends = card.endsAt { CountdownLabel(ends: ends) }
+                if card.kind == .link, let url = URL(string: card.args["url"] as? String ?? "") {
+                    Link("Open", destination: url)
+                        .font(.caption2.weight(.medium)).padding(.top, 4)
+                }
+                if card.kind == .agenda && card.items.isEmpty && card.status == .done {
+                    Text("Nothing scheduled").font(.caption).foregroundStyle(.secondary)
+                }
                 statusLine
             }
 
@@ -175,6 +208,28 @@ struct HomeCardView: View {
         )
         .clipShape(RoundedRectangle(cornerRadius: 9))
         .transition(.move(edge: .top).combined(with: .opacity))
+    }
+
+    /// Live countdown, redrawn once a second off the wall clock rather than a
+    /// ticking counter, so it stays right even if the app was busy or asleep.
+    private struct CountdownLabel: View {
+        let ends: Date
+        @State private var chimed = false
+
+        var body: some View {
+            TimelineView(.periodic(from: .now, by: 1)) { ctx in
+                let left = Int(ends.timeIntervalSince(ctx.date).rounded(.up))
+                Text(left > 0
+                     ? String(format: "%d:%02d", left / 60, left % 60)
+                     : "Time's up")
+                    .font(.title3.monospacedDigit().weight(.medium))
+                    .foregroundStyle(left > 0 ? Color.primary : Color.red)
+                    .onChange(of: left <= 0) { _, done in
+                        if done && !chimed { chimed = true; NSSound.beep() }
+                    }
+            }
+            .padding(.top, 2)
+        }
     }
 
     /// Handing off to Music/Spotify is the one thing in the app that leaves the
