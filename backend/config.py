@@ -42,6 +42,15 @@ LLM_SYSTEM = (
 )
 LLM_MAX_TOKENS = MAX_TOKENS
 
+# ── Tool calling / home screen (Stage 3) ───────────────────────────────────
+# How many times a turn may go LLM → tool → LLM before we force a plain reply.
+# 2 covers "remind me X and put Y on my calendar"; more invites runaway loops.
+LLM_TOOL_ROUNDS = 2
+# The app performs the real EventKit write and reports back. We wait this long
+# so the spoken confirmation reflects what actually happened (including a
+# permission denial) — EventKit writes take ~ms, so this only bites on failure.
+TOOL_APP_TIMEOUT_S = 2.0
+
 # ── STT / TTS (Stage 2) ────────────────────────────────────────────────────
 # small.en ~300ms vs turbo's ~2.2s here (D9 revisited: turbo's accuracy edge
 # wasn't worth 7x the latency on clean English). base.en (~90ms) if you want

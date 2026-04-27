@@ -12,10 +12,12 @@ import asyncio
 import threading
 from typing import AsyncIterator, Iterator, Optional
 
+import mlx.core as mx
 from mlx_lm import load, stream_generate
 from mlx_lm.models.cache import make_prompt_cache, trim_prompt_cache
 
 import config
+from voice.tools import TOOLS
 
 Message = dict[str, str]
 
@@ -34,11 +36,49 @@ class LLM:
         self.model, self.tokenizer = load(model_id)
         self._cache = make_prompt_cache(self.model)
         self._cached_ids: list[int] = []
+        self._prime_len = 0
 
     def reset(self) -> None:
-        """New conversation: drop the KV cache and prefix bookkeeping."""
-        self._cache = make_prompt_cache(self.model)
-        self._cached_ids = []
+        """New conversation: drop everything the conversation added, but keep
+        the primed system prefix — re-prefilling it costs seconds (see prime)."""
+        if self._prime_len and len(self._cached_ids) >= self._prime_len:
+            trim_prompt_cache(self._cache, len(self._cached_ids) - self._prime_len)
+            self._cached_ids = self._cached_ids[:self._prime_len]
+        else:
+            self._cache = make_prompt_cache(self.model)
+            self._cached_ids = []
+
+    def prime(self, system: str) -> None:
+        """Prefill the stable prefix — persona, tool schemas, day table — once at
+        startup and pin it under every later `reset`.
+
+        Worth the trouble because the tool schemas alone are ~640 tokens and
+        this machine prefills at only ~200 tok/s: without priming, the first
+        turn of every session pays ~4.7 s before the model says anything.
+        """
+        self._prime_len = 0
+        self.reset()
+        # Prime only the span that a real prompt genuinely begins with, so the
+        # cached tokens are a true prefix and `_common_prefix` reuses all of it.
+        probe = self._prompt_ids([{"role": "system", "content": system},
+                                  {"role": "user", "content": "hi"}])
+        sys_only = list(self.tokenizer.apply_chat_template(
+            [{"role": "system", "content": system}],
+            add_generation_prompt=False, tokenize=True, tools=TOOLS))
+        n = _common_prefix(sys_only, probe)
+
+        ids = mx.array(probe[:n])
+        step = 512      # chunked like mlx-lm's own prefill: full-length logits
+        while ids.size > step:      # for 900 positions would spike ~0.5 GB
+            self.model(ids[:step][None], cache=self._cache)
+            mx.eval([c.state for c in self._cache])
+            ids = ids[step:]
+        self.model(ids[None], cache=self._cache)
+        mx.eval([c.state for c in self._cache])
+
+        self._cached_ids = probe[:n]
+        self._prime_len = n
+        print(f"[llm] primed {n} prefix tokens", flush=True)
 
     def warmup(self) -> None:
         """Compile Metal kernels with a throwaway generation so turn 1 is fast."""
@@ -47,9 +87,11 @@ class LLM:
         self.reset()
 
     def _prompt_ids(self, messages: list[Message]) -> list[int]:
+        # `tools=` renders the signatures into the system block — stable prefix,
+        # so tool-calling costs one prefill per session, not one per turn (D4).
         return list(
             self.tokenizer.apply_chat_template(
-                messages, add_generation_prompt=True, tokenize=True
+                messages, add_generation_prompt=True, tokenize=True, tools=TOOLS
             )
         )
 

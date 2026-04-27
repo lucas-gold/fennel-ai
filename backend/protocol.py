@@ -22,14 +22,22 @@ import numpy as np
 _AUDIO_HEADER = struct.Struct(">II")
 
 # ── client → server ────────────────────────────────────────────────────────
-# {"type": "user_text", "text": "..."}   user typed a message
+# {"type": "user_text", "text": "...", "speak": bool}   user typed a message
+# {"type": "tool_result", "id": "...", "ok": bool, "error": "..."}
+#     Stage 3: the app finished (or failed) the real EventKit write for the
+#     tool call with this id. The backend waits briefly for this so the spoken
+#     confirmation matches reality.
 # {"type": "ping"}                         liveness check
 #
 # ── server → client ────────────────────────────────────────────────────────
 # {"type": "state", "value": "idle|listening|thinking|speaking"}
+# {"type": "stt", "text": "..."}                what the mic was heard to say
 # {"type": "token", "turn": N, "text": "..."}   one streamed LLM token/chunk
 # {"type": "turn_end", "turn": N}               reply complete
-# {"type": "tool", "name": "...", "args": {...}} Stage 3: drives home UI
+# {"type": "tool", "id": "...", "name": "...", "args": {...}}
+#     Stage 3: drives the home UI. `name` is one of set_reminder / add_event /
+#     show_panel / set_fact; `args` is already normalized (absolute ISO times).
+#     The app renders a card, performs the side effect, and replies tool_result.
 # {"type": "pong"}
 
 

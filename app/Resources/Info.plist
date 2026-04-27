@@ -30,5 +30,11 @@
     <string>my_ai adds reminders you ask it to create.</string>
     <key>NSCalendarsUsageDescription</key>
     <string>my_ai adds calendar events you ask it to create.</string>
+    <!-- macOS 14+ requestFullAccessTo… reads these keys, not the legacy ones
+         above; without them the request crashes the app. -->
+    <key>NSRemindersFullAccessUsageDescription</key>
+    <string>my_ai adds reminders you ask it to create.</string>
+    <key>NSCalendarsFullAccessUsageDescription</key>
+    <string>my_ai adds calendar events you ask it to create.</string>
 </dict>
 </plist>
