@@ -80,6 +80,22 @@ class LLM:
         self._prime_len = n
         print(f"[llm] primed {n} prefix tokens", flush=True)
 
+    def complete(self, messages: list[Message], max_tokens: int = 160) -> str:
+        """One-shot generation on a throwaway cache.
+
+        Used for background work like summarising (D8). It must NOT touch
+        `self._cache`: sharing it would evict the live conversation's prefix and
+        make the user's next turn pay a full re-prefill.
+        """
+        prompt = self._prompt_ids(messages)
+        cache = make_prompt_cache(self.model)
+        out: list[str] = []
+        for resp in stream_generate(self.model, self.tokenizer, prompt=prompt,
+                                    max_tokens=max_tokens, prompt_cache=cache):
+            if resp.text:
+                out.append(resp.text)
+        return "".join(out).strip()
+
     def warmup(self) -> None:
         """Compile Metal kernels with a throwaway generation so turn 1 is fast."""
         for _ in self.stream_reply([{"role": "user", "content": "Hi"}]):

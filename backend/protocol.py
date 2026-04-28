@@ -27,6 +27,10 @@ _AUDIO_HEADER = struct.Struct(">II")
 #     Stage 3: the app finished (or failed) the real EventKit write for the
 #     tool call with this id. The backend waits briefly for this so the spoken
 #     confirmation matches reality.
+# {"type": "session_list"}                 ask for the chat list
+# {"type": "session_open", "id": N}        resume a saved chat
+# {"type": "session_new"}                  start a fresh chat
+# {"type": "session_delete", "id": N}      delete a chat and its messages
 # {"type": "ping"}                         liveness check
 #
 # ── server → client ────────────────────────────────────────────────────────
@@ -38,6 +42,9 @@ _AUDIO_HEADER = struct.Struct(">II")
 #     Stage 3: drives the home UI. `name` is one of set_reminder / add_event /
 #     show_panel / set_fact; `args` is already normalized (absolute ISO times).
 #     The app renders a card, performs the side effect, and replies tool_result.
+#     A read-style tool (agenda) gets its answer back via tool_result "data".
+# {"type": "sessions", "items": [{id,title,updated,count}], "current": N}
+# {"type": "session_opened", "id": N, "messages": [{"role","text"}]}
 # {"type": "pong"}
 
 

@@ -16,7 +16,9 @@ import websockets
 import config
 import protocol as P
 from voice.llm import LLM
+from voice.memory import Memory
 from voice.session import Session
+from voice.store import Store
 from voice.stt import WhisperSTT
 from voice.tools import system_prompt
 from voice.tts import KokoroTTS
@@ -24,6 +26,8 @@ from voice.tts import KokoroTTS
 _stt: WhisperSTT
 _llm: LLM
 _tts: KokoroTTS
+_store: Store
+_memory: Memory
 _system: str
 _system_day: date
 
@@ -46,8 +50,9 @@ async def handler(ws) -> None:
         await ws.send(b)
 
     session = Session(send_control, send_audio, _stt, _llm, _tts,
-                      system=_current_system())
+                      _store, _memory, system=_current_system())
     await ws.send(P.encode("state", value="idle"))
+    await session.open_session()          # resume where the user left off
     try:
         async for raw in ws:
             if isinstance(raw, (bytes, bytearray)):
@@ -61,6 +66,14 @@ async def handler(ws) -> None:
                                             speak=bool(msg.get("speak", False)))
                 elif msg["type"] == "tool_result":
                     session.feed_tool_result(msg)
+                elif msg["type"] == "session_list":
+                    await session.send_sessions()
+                elif msg["type"] == "session_open":
+                    await session.open_session(int(msg["id"]))
+                elif msg["type"] == "session_new":
+                    await session.open_session(create=True)
+                elif msg["type"] == "session_delete":
+                    await session.delete_session(int(msg["id"]))
                 elif msg["type"] == "ping":
                     await ws.send(P.encode("pong"))
     finally:
@@ -68,7 +81,9 @@ async def handler(ws) -> None:
 
 
 async def main() -> None:
-    global _stt, _llm, _tts, _system, _system_day
+    global _stt, _llm, _tts, _store, _memory, _system, _system_day
+    _store = Store()
+    _memory = Memory(_store)
     print("loading models "
           f"({config.LLM_MODEL.split('/')[-1]}, "
           f"{config.STT_MODEL.split('/')[-1]}, "

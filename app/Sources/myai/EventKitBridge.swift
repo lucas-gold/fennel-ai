@@ -64,6 +64,54 @@ enum EventKitBridge {
         return e.eventIdentifier
     }
 
+    /// Read back what's already scheduled, for the `agenda` tool. Returns lines
+    /// the model can simply speak, plus the count, since it only needs to say
+    /// them — not reason over the structure.
+    static func agenda(range: String) async throws -> (lines: [String], count: Int) {
+        let cal = Calendar.current
+        let now = Date()
+        let start: Date, end: Date
+        switch range {
+        case "tomorrow":
+            start = cal.startOfDay(for: cal.date(byAdding: .day, value: 1, to: now)!)
+            end = cal.date(byAdding: .day, value: 1, to: start)!
+        case "week":
+            start = now
+            end = cal.date(byAdding: .day, value: 7, to: cal.startOfDay(for: now))!
+        default:
+            start = now
+            end = cal.date(byAdding: .day, value: 1, to: cal.startOfDay(for: now))!
+        }
+
+        let fmt = DateFormatter()
+        fmt.doesRelativeDateFormatting = true
+        fmt.dateStyle = (range == "today") ? .none : .medium
+        fmt.timeStyle = .short
+
+        var out: [(Date, String)] = []
+
+        if try await store.requestFullAccessToEvents() {
+            let p = store.predicateForEvents(withStart: start, end: end, calendars: nil)
+            for e in store.events(matching: p) where !e.isAllDay {
+                out.append((e.startDate, "\(fmt.string(from: e.startDate)): \(e.title ?? "Event")"))
+            }
+        }
+        if try await store.requestFullAccessToReminders() {
+            let p = store.predicateForIncompleteReminders(
+                withDueDateStarting: start, ending: end, calendars: nil)
+            let reminders: [EKReminder] = await withCheckedContinuation { cont in
+                store.fetchReminders(matching: p) { cont.resume(returning: $0 ?? []) }
+            }
+            for r in reminders {
+                let due = r.dueDateComponents.flatMap(cal.date(from:))
+                let when = due.map { "\(fmt.string(from: $0)): " } ?? ""
+                out.append((due ?? start, "\(when)\(r.title ?? "Reminder") (reminder)"))
+            }
+        }
+        out.sort { $0.0 < $1.0 }
+        return (out.map(\.1), out.count)
+    }
+
     /// Deleting something already gone is success, not an error — the user may
     /// have removed it in Reminders/Calendar before dismissing the card.
     static func deleteReminder(id: String) async throws {

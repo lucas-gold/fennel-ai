@@ -146,8 +146,9 @@ silence. Two fixes, both straight applications of D4:
 2. Priming only works if the prefix is byte-identical every session, so the
    system prompt can no longer contain the current time. It carries the date
    plus a 7-day table (stable all day); the **clock rides on each user message**
-   as a `[6:25 PM]` prefix — volatile content last, exactly where D4 wants it,
-   and a past turn's stamp never changes so history stays cacheable.
+   — volatile content last, exactly where D4 wants it, and a past turn's stamp
+   never changes so history stays cacheable. (Stage 4 widened that prefix into
+   the `<context>` block that also carries recall — see D-MEMORY.)
 
 The day table is not padding: a 4-bit 4B model handles clock arithmetic fine but
 miscounts weekdays ("next Wednesday" landed five days late). Looking a date up
@@ -185,3 +186,50 @@ Search links (not track IDs) are also the honest choice given the model: a local
 4B will confidently invent a plausible-sounding title, and a search lands
 somewhere useful anyway where a dead track ID would not. The links are buttons
 the user presses — the app itself still never reaches the network.
+
+---
+
+## D-MEMORY — Three inputs, three depths, chosen by how often each changes
+
+Memory is not one blob prepended to the prompt. Each input sits at the depth
+that matches its volatility, because with prefix caching (D4) depth *is* cost —
+anything placed above a change forces everything below it to re-prefill:
+
+| input | where | re-prefills |
+|---|---|---|
+| tool schemas, persona, day table | primed system prefix | once per day |
+| facts + rolling summary | `<context>` message above the window | only when the window is rebuilt |
+| verbatim turns | the window | on chunked eviction |
+| FTS recall + clock | glued to the current user message | never — that position is new anyway |
+
+The middle row is the interesting one. Facts and the summary change rarely but
+not never, so putting them above the window costs a re-prefill when they change
+— and that is free, because we only rebuild them *when the window is rebuilt
+anyway*. Eviction is likewise chunked (drop to 1x when we exceed 2x) rather than
+sliding one turn at a time, which would invalidate the whole cached window on
+every single turn.
+
+Recall is FTS5, not embeddings: it ships with Python's SQLite, needs no model,
+and stays honest offline. Its limit is real and worth stating — it matches
+words, so "what should I order for dinner" does not retrieve "I'm allergic to
+shellfish". **Facts are what covers that gap**, since they are always present
+rather than retrieved, which is why `set_fact`'s description is emphatic that
+claiming to remember without calling it means not remembering.
+
+Summarising runs through `LLM.complete` on a throwaway KV cache. Sharing the
+conversation's cache would evict its prefix and make the user's next turn pay a
+full re-prefill for a background chore.
+
+---
+
+## D-SESSIONS — Persisted in the backend; one ongoing chat in the UI
+
+Chat history lives in the backend's SQLite, not the app, because the LLM is its
+main consumer: the window, the summary and recall are all prompt inputs, so
+keeping them beside the prompt builder avoids shipping conversation state across
+the WebSocket every turn. The app asks only for what it draws.
+
+The UI deliberately under-sells multiplicity. One ongoing conversation is the
+default and the tab strip stays hidden until a second chat is actually open;
+older chats live behind a History menu instead of accumulating as tabs. Closing
+a tab and deleting a chat are kept separate — one hides, one destroys.

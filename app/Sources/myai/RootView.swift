@@ -96,6 +96,7 @@ private struct ChatPanel: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            SessionBar()
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 8) {

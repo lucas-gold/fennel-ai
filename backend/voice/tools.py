@@ -27,8 +27,11 @@ TOOLS: list[dict] = [
         "function": {
             "name": "set_reminder",
             "description": (
-                "Create a reminder in the user's Reminders app. Use whenever "
-                "they ask to be reminded of something or to remember a task."
+                "Create a reminder in the user's Reminders app. Only when they "
+                "actually ask to be reminded, or ask you to add a task. If they "
+                "merely mention something they ought to do, just talk with them "
+                "— do not create a reminder and do not offer one. Never invent a "
+                "time they did not give: leave `due` out instead."
             ),
             "parameters": {
                 "type": "object",
@@ -67,6 +70,68 @@ TOOLS: list[dict] = [
                     "location": {"type": "string"},
                 },
                 "required": ["title", "start"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "agenda",
+            "description": (
+                "Look up what the user already has scheduled — their reminders "
+                "and calendar events. Use it whenever they ask what's on, what's "
+                "next, whether they're free, or what they have to do. Read the "
+                "result back conversationally; do not guess if you haven't looked."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "range": {
+                        "type": "string",
+                        "enum": ["today", "tomorrow", "week"],
+                        "description": "How far ahead to look. Defaults to today.",
+                    },
+                },
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "set_timer",
+            "description": (
+                "Start a countdown timer that runs on screen and chimes when it "
+                "finishes. Use for short waits — cooking, a break, 'in ten "
+                "minutes'. For anything hours away or on a specific date, use "
+                "set_reminder instead."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "minutes": {"type": "number", "description": "Length in minutes; may be fractional."},
+                    "label": {"type": "string", "description": "What it's for, e.g. 'pasta'."},
+                },
+                "required": ["minutes"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "open_link",
+            "description": (
+                "Put a link on screen as a button the user can click — a website, "
+                "or a page in a service like Apple Music or YouTube. Use when "
+                "they ask you to open or pull up something. The user does the "
+                "clicking, so say what it is rather than claiming you opened it."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "url": {"type": "string", "description": "Full http(s) URL."},
+                    "label": {"type": "string", "description": "Short button text."},
+                },
+                "required": ["url", "label"],
             },
         },
     },
@@ -122,8 +187,12 @@ TOOLS: list[dict] = [
         "function": {
             "name": "set_fact",
             "description": (
-                "Remember a durable fact about the user (preferences, names, "
-                "routines). Not for one-off chatter."
+                "Store something about the user that should outlast this "
+                "conversation: an allergy, a preference, a name, a routine, a "
+                "person or pet in their life. Call it whenever they tell you to "
+                "remember something, or state a lasting fact about themselves. "
+                "This is the only way you remember anything — saying you will "
+                "keep it in mind without calling this means you won't."
             ),
             "parameters": {
                 "type": "object",
@@ -278,6 +347,37 @@ def normalize(name: str, args: dict) -> tuple[dict, dict]:
                 "items": [str(i) for i in items] if isinstance(items, list) else None}
         return card, {"ok": True, "shown": title}
 
+    if name == "agenda":
+        rng = str(args.get("range", "today")).strip().lower()
+        if rng not in {"today", "tomorrow", "week"}:
+            rng = "today"
+        # The real answer comes back from the app, which owns EventKit; this is
+        # only the placeholder the app's `data` reply fills in.
+        return {"range": rng}, {"ok": True, "range": rng}
+
+    if name == "set_timer":
+        try:
+            minutes = float(args.get("minutes", 0))
+        except (TypeError, ValueError):
+            minutes = 0.0
+        if not 0 < minutes <= 24 * 60:
+            return {}, {"ok": False, "error": "minutes must be between 0 and 1440"}
+        label = str(args.get("label", "")).strip() or "Timer"
+        ends = datetime.now() + timedelta(minutes=minutes)
+        card = {"label": label, "minutes": minutes, "ends": ends.isoformat()}
+        pretty = (f"{int(minutes)} min" if minutes == int(minutes)
+                  else f"{minutes:g} min")
+        return card, {"ok": True, "label": label, "length": pretty}
+
+    if name == "open_link":
+        url = str(args.get("url", "")).strip()
+        # http(s) only: the model picks this URL, so anything that could reach a
+        # file:// path or a custom scheme handler stays out of reach.
+        if not re.match(r"^https?://[^\s]+$", url):
+            return {}, {"ok": False, "error": "only http(s) links can be shown"}
+        label = str(args.get("label", "")).strip() or url
+        return {"url": url, "label": label}, {"ok": True, "shown": label}
+
     if name == "recommend_song":
         title = str(args.get("title", "")).strip()
         artist = str(args.get("artist", "")).strip()
@@ -295,13 +395,6 @@ def normalize(name: str, args: dict) -> tuple[dict, dict]:
         return {"key": key, "value": value}, {"ok": True, "remembered": f"{key}: {value}"}
 
     return {}, {"ok": False, "error": f"unknown tool {name}"}
-
-
-def stamp(text: str, now: Optional[datetime] = None) -> str:
-    """Timestamp a user message. The clock is the one genuinely volatile input,
-    so it rides on the message — last in the prompt, never in the prefix (D4) —
-    and because a past turn's stamp never changes, history stays cacheable."""
-    return f"[{(now or datetime.now()).strftime('%-I:%M %p')}] {text}"
 
 
 def system_prompt(base: str, now: Optional[datetime] = None) -> str:
@@ -322,13 +415,18 @@ def system_prompt(base: str, now: Optional[datetime] = None) -> str:
         f"{base}\n\n"
         "Dates:\n"
         f"{days}\n"
-        "Every user message begins with the current clock time in square "
-        "brackets. Use it to resolve relative times; never say it back. "
-        "Resolve dates against the table above and always pass absolute "
-        "ISO 8601 local times to tools.\n\n"
+        "Each user message may open with a <context> block holding the current "
+        "time and things you remember from past conversations. It is written "
+        "for you, not spoken by the user: use it freely, but never quote it, "
+        "read it aloud, or mention that you were given it. Resolve dates "
+        "against the table above and always pass absolute ISO 8601 local times "
+        "to tools.\n\n"
         "Tools are extra abilities, not your only ones — answer normally when "
         "the user just wants an answer, and call a tool only when they want "
-        "that action taken. Do not announce a tool before calling it: call it, "
+        "that action taken. Most turns need no tool at all. Prefer plain "
+        "conversation; never steer a chat toward setting a reminder, and don't "
+        "reach for the tool you last used out of habit — pick the one that fits "
+        "this turn, or none. Do not announce a tool before calling it: call it, "
         "then confirm once, in one short spoken sentence. You are told whether "
         "it actually worked. Never read out tool syntax, JSON, or raw timestamps."
     )

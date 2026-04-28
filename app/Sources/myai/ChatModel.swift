@@ -32,6 +32,11 @@ final class ChatModel: ObservableObject {
     @Published var connected = false         // backend reachable?
     @Published var speakTypedReplies = false // speak replies to typed messages too
     @Published var cards: [HomeCard] = []    // home surface, raised by tool calls
+    @Published var sessions: [ChatSession] = []
+    @Published var currentSessionID = 0
+    /// Chats showing in the tab strip. One is the norm — the strip only appears
+    /// once a second is opened, so the default shape stays "one ongoing chat".
+    @Published var openTabs: [Int] = []
 
     private let client = WebSocketClient()
     private let audio = AudioEngine()
@@ -95,9 +100,51 @@ final class ChatModel: ObservableObject {
             activeTurn = nil
         case "tool":
             handleTool(msg)
+        case "sessions":
+            if let items = msg["items"] as? [[String: Any]] {
+                sessions = items.compactMap(ChatSession.init(json:))
+            }
+            if let cur = msg["current"] as? Int { adoptCurrent(cur) }
+        case "session_opened":
+            if let id = msg["id"] as? Int { adoptCurrent(id) }
+            let rows = msg["messages"] as? [[String: Any]] ?? []
+            messages = rows.compactMap { row in
+                guard let text = row["text"] as? String, !text.isEmpty,
+                      let role = row["role"] as? String else { return nil }
+                return ChatMessage(role: role == "user" ? .user : .assistant, text: text)
+            }
+            activeTurn = nil
+            sawTurnEnd = true
         default:
             break
         }
+    }
+
+    private func adoptCurrent(_ id: Int) {
+        currentSessionID = id
+        if !openTabs.contains(id) { openTabs.append(id) }
+    }
+
+    // MARK: - chat sessions
+
+    func newSession()            { client.send(Wire.encode("session_new")) }
+    func openSession(_ id: Int)  { client.send(Wire.encode("session_open", ["id": id])) }
+    func refreshSessions()       { client.send(Wire.encode("session_list")) }
+
+    /// Delete removes the conversation for good; closing a tab only hides it.
+    func deleteSession(_ id: Int) {
+        openTabs.removeAll { $0 == id }
+        client.send(Wire.encode("session_delete", ["id": id]))
+    }
+
+    func closeTab(_ id: Int) {
+        guard openTabs.count > 1 else { return }   // never leave zero chats open
+        openTabs.removeAll { $0 == id }
+        if id == currentSessionID, let next = openTabs.last { openSession(next) }
+    }
+
+    func title(of id: Int) -> String {
+        sessions.first { $0.id == id }?.title ?? "New chat"
     }
 
     /// ✕ on a reminder/event deletes the real Reminders/Calendar entry too —
@@ -133,9 +180,9 @@ final class ChatModel: ObservableObject {
         cards[i].status = .working
         Task {
             do {
-                let ext = try await performWrite(card)
+                let r = try await performWrite(card)
                 if let j = cards.firstIndex(where: { $0.id == card.id }) {
-                    cards[j].externalID = ext
+                    cards[j].externalID = r.id
                     cards[j].status = .done
                 }
             } catch {
@@ -160,12 +207,13 @@ final class ChatModel: ObservableObject {
 
         Task {
             do {
-                let ext = try await performWrite(card)
+                let r = try await performWrite(card)
                 if let i = cards.firstIndex(where: { $0.id == id }) {
-                    cards[i].externalID = ext
+                    cards[i].externalID = r.id
+                    cards[i].items = r.lines.isEmpty ? cards[i].items : r.lines
                     cards[i].status = .done
                 }
-                reply(id, ok: true, error: nil)
+                reply(id, ok: true, error: nil, data: r.data)
             } catch {
                 let why = error.localizedDescription
                 setStatus(id, .failed(why))
@@ -175,25 +223,33 @@ final class ChatModel: ObservableObject {
     }
 
     /// The real side effect, shared by the first write and by Undo.
-    /// Returns the EventKit identifier where there is one.
-    private func performWrite(_ card: HomeCard) async throws -> String? {
+    /// `id` is the EventKit identifier where there is one; `data` is what a
+    /// read-style tool sends back for the model to speak from.
+    private func performWrite(
+        _ card: HomeCard
+    ) async throws -> (id: String?, data: [String: Any]?, lines: [String]) {
         switch card.kind {
         case .reminder:
-            return try await EventKitBridge.addReminder(
+            let ext = try await EventKitBridge.addReminder(
                 title: card.title,
                 due: EventKitBridge.parseDate(card.args["due"] as? String),
                 notes: card.args["notes"] as? String)
+            return (ext, nil, [])
         case .event:
             guard let start = EventKitBridge.parseDate(card.args["start"] as? String) else {
                 throw EventKitBridge.DeniedError(what: "Calendar")
             }
             let end = EventKitBridge.parseDate(card.args["end"] as? String)
                 ?? start.addingTimeInterval(3600)
-            return try await EventKitBridge.addEvent(
+            let ext = try await EventKitBridge.addEvent(
                 title: card.title, start: start, end: end,
                 location: card.args["location"] as? String)
-        case .panel, .fact, .song:
-            return nil                  // the card itself is the whole effect
+            return (ext, nil, [])
+        case .agenda:
+            let a = try await EventKitBridge.agenda(range: card.args["range"] as? String ?? "today")
+            return (nil, ["items": a.lines, "count": a.count], a.lines)
+        case .panel, .fact, .song, .timer, .link:
+            return (nil, nil, [])       // the card itself is the whole effect
         }
     }
 
@@ -202,9 +258,10 @@ final class ChatModel: ObservableObject {
         cards[i].status = status
     }
 
-    private func reply(_ id: String, ok: Bool, error: String?) {
+    private func reply(_ id: String, ok: Bool, error: String?, data: [String: Any]? = nil) {
         var fields: [String: Any] = ["id": id, "ok": ok]
         if let error { fields["error"] = error }
+        if let data { fields["data"] = data }
         client.send(Wire.encode("tool_result", fields))
     }
 

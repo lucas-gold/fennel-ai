@@ -25,8 +25,10 @@ import numpy as np
 import config
 import protocol as P
 from voice.llm import LLM
+from voice.memory import Memory
+from voice.store import Store
 from voice.stt import WhisperSTT
-from voice.tools import ToolStream, normalize, stamp, system_prompt
+from voice.tools import ToolStream, normalize, system_prompt
 from voice.tts import ClauseSplitter, KokoroTTS
 from voice.vad import Endpointer
 
@@ -37,6 +39,7 @@ Audio = Callable[[bytes], Awaitable[None]]   # send a binary audio frame
 class Session:
     def __init__(self, send_control: Control, send_audio: Audio,
                  stt: WhisperSTT, llm: LLM, tts: KokoroTTS,
+                 store: Store, memory: Memory,
                  system: Optional[str] = None) -> None:
         self._send_control = send_control
         self._send_audio = send_audio
@@ -48,12 +51,15 @@ class Session:
         self._llm.reset()
         self._tts = tts
         self._endpointer = Endpointer()
+        self._store = store
+        self._memory = memory
 
         # Must be the exact string the LLM was primed with, or the cached
         # prefix misses and the first turn pays for the whole prefill again.
-        self._messages: list[dict] = [
-            {"role": "system", "content": system or system_prompt(config.LLM_SYSTEM)}
-        ]
+        self._system = system or system_prompt(config.LLM_SYSTEM)
+        self._session_id: int = 0
+        self._messages: list[dict] = [{"role": "system", "content": self._system}]
+        self._summary_task: Optional[asyncio.Task] = None
         self._epoch = 0
         self._turn_no = 0
         self._turn_task: Optional[asyncio.Task] = None
@@ -63,8 +69,6 @@ class Session:
 
         # Tool calls awaiting the app's real-world result, keyed by call id.
         self._pending: dict[str, asyncio.Future] = {}
-        # Facts remembered this session; Stage 4 makes them durable (SQLite).
-        self._facts: dict[str, str] = {}
 
     # ── lifecycle ──────────────────────────────────────────────────────────
 
@@ -73,6 +77,46 @@ class Session:
 
     async def close(self) -> None:
         await self._supersede()
+
+    # ── chat sessions ──────────────────────────────────────────────────────
+
+    async def open_session(self, session_id: Optional[int] = None,
+                           create: bool = False) -> None:
+        """Resume a conversation (or start one) and send the app its history."""
+        await self._supersede()
+        if create or session_id is None:
+            session_id = (None if create else self._store.latest_session()) \
+                         or self._store.new_session()
+        self._session_id = int(session_id)
+        self._rebuild()
+        rows = self._store.messages(self._session_id)
+        await self._send_control(P.encode(
+            "session_opened", id=self._session_id,
+            messages=[{"role": r["role"], "text": r["content"]} for r in rows]))
+        await self.send_sessions()
+
+    async def send_sessions(self) -> None:
+        await self._send_control(P.encode("sessions",
+                                          items=self._store.list_sessions(),
+                                          current=self._session_id))
+
+    async def delete_session(self, session_id: int) -> None:
+        self._store.delete_session(int(session_id))
+        if int(session_id) == self._session_id:
+            await self.open_session()          # fall back to the next newest
+        else:
+            await self.send_sessions()
+
+    def _rebuild(self) -> None:
+        """Rebuild the prompt from durable state: primed system prefix, then the
+        facts/summary block, then the verbatim window. Costs a re-prefill, so it
+        happens on session switches and chunked evictions only — never per turn."""
+        msgs = [{"role": "system", "content": self._system}]
+        if ctx := self._memory.context_message(self._session_id):
+            msgs.append(ctx)
+        msgs += self._memory.window(self._session_id)
+        self._messages = msgs
+        self._llm.reset()
 
     def _live(self, epoch: int) -> bool:
         return epoch == self._epoch
@@ -147,7 +191,7 @@ class Session:
             return {"name": name, **result}
 
         if name == "set_fact":
-            self._facts[card["key"]] = card["value"]
+            self._store.set_fact(card["key"], card["value"])
 
         call_id = uuid4().hex[:8]
         fut: asyncio.Future = asyncio.get_running_loop().create_future()
@@ -166,6 +210,10 @@ class Session:
         if app is not None and not app.get("ok", True):
             return {"name": name, "ok": False,
                     "error": app.get("error") or "the app could not complete it"}
+        # Read-style tools (agenda) answer from the app's side of the wire —
+        # its `data` is the actual result the model has to speak from.
+        if app is not None and isinstance(app.get("data"), dict):
+            result = {**result, **app["data"]}
         return {"name": name, **result}
 
     # ── the turn ───────────────────────────────────────────────────────────
@@ -182,7 +230,14 @@ class Session:
             return
         if from_voice:  # let the UI show what was heard
             await self._send_control(P.encode("stt", text=text))
-        self._messages.append({"role": "user", "content": stamp(text)})
+        # The store keeps what the user actually said; the prompt gets the
+        # volatile preamble (clock + recall) glued on front — last position in
+        # the prompt, so the cached prefix behind it survives (D4).
+        self._store.add_message(self._session_id, "user", text)
+        self._messages.append({
+            "role": "user",
+            "content": self._memory.preamble(self._session_id, text) + text,
+        })
 
         self._turn_no += 1
         turn = self._turn_no
@@ -254,9 +309,11 @@ class Session:
         self._assistant_active = do_speak
         if do_speak:
             await self._send_control(P.encode("state", value="speaking"))
+        visible = ""
         try:
             for round_ in range(config.LLM_TOOL_ROUNDS + 1):
                 raw, calls, said = await llm_pass()
+                visible += said
                 if not self._live(epoch):
                     break
                 # Store the generation verbatim: re-rendering structured
@@ -280,11 +337,26 @@ class Session:
         finally:
             self._assistant_active = False
             if self._live(epoch):
+                self._store.add_message(self._session_id, "assistant", visible.strip())
                 await self._send_control(P.encode("turn_end", turn=turn))
                 if do_speak:
                     await self._send_control(P.encode("state", value="idle"))
+                await self._after_turn()
             else:
                 # barge-in: history records only what was actually spoken (D3)
-                self._messages.append(
-                    {"role": "assistant", "content": (spoken.strip() + " —").strip()}
-                )
+                partial = (spoken.strip() + " —").strip()
+                self._messages.append({"role": "assistant", "content": partial})
+                self._store.add_message(self._session_id, "assistant", partial)
+
+    async def _after_turn(self) -> None:
+        """Housekeeping the user must never wait for."""
+        # Chunked eviction: rebuild only once the window is well past budget, so
+        # the re-prefill lands every few turns instead of every turn.
+        if len(self._messages) > config.VERBATIM_TURNS * 4 + 2:
+            self._rebuild()
+        if self._summary_task and not self._summary_task.done():
+            return
+        if self._memory.needs_summary(self._session_id):
+            sid = self._session_id
+            self._summary_task = asyncio.create_task(
+                asyncio.to_thread(self._memory.summarise, sid, self._llm))
