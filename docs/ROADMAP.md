@@ -67,7 +67,13 @@ app with the backend running.
 - Swift `HomeCards.swift` + `EventKitBridge.swift` — dismissible cards and real
   Reminders/Calendar writes; the app reports the outcome back as `tool_result`
   so the spoken confirmation is truthful about failures.
+- `recommend_song` — a card with Apple Music / Spotify search buttons (D-MUSIC).
+- ✕ on a reminder/event deletes the real EventKit entry too, with a 6 s Undo.
 - `set_fact` is session-scoped for now; Stage 4 gives it a durable store.
+
+Also fixed here: the mic was open for the whole session (D-MIC), and the clause
+splitter jumped 18→90 chars, which starved playback about a second in — measured
+0.01 s of slack before the next clause arrived, now 0.82 s with a 45-char step.
 
 ## Stage 4 — Memory
 

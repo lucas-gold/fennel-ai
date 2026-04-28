@@ -152,3 +152,36 @@ silence. Two fixes, both straight applications of D4:
 The day table is not padding: a 4-bit 4B model handles clock arithmetic fine but
 miscounts weekdays ("next Wednesday" landed five days late). Looking a date up
 beats computing it.
+
+---
+
+## D-MIC — The engine has modes, because "tap to talk" has to be literal
+
+The first audio engine started at launch with the voice-processing tap installed
+and `startListening()` merely gated whether frames were *sent*. The mic was
+therefore open — and the macOS recording indicator lit — for the entire session,
+which is indefensible for an app whose pitch is that nothing leaves your Mac.
+
+Fixed by giving `AudioEngine` three modes (`off` / `playback` / `voice`) and
+building a **brand-new `AVAudioEngine` on every switch**. That looks wasteful and
+isn't: disabling voice processing on a reused input node leaves the input stream
+open anyway, whereas a freshly-built playback engine that never touches
+`inputNode` is *provably* not recording. Playback still shares the engine with
+capture while listening, so the AEC reference (D6) is intact.
+
+Closing the mic waits for the player queue to drain, so tapping "stop" while the
+assistant is mid-sentence doesn't cut it off.
+
+---
+
+## D-MUSIC — Recommend by handing off, not by embedding a player
+
+`recommend_song` renders a card with Apple Music and Spotify **search links**.
+No SDK, no OAuth, no bundled player: embedding either would mean an account,
+network access on a launch path, and licence terms that don't fit a paid
+Apache-2.0/MIT product.
+
+Search links (not track IDs) are also the honest choice given the model: a local
+4B will confidently invent a plausible-sounding title, and a search lands
+somewhere useful anyway where a dead track ID would not. The links are buttons
+the user presses — the app itself still never reaches the network.

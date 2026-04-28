@@ -60,8 +60,13 @@ TTS_MODEL = "mlx-community/Kokoro-82M-4bit"
 TTS_VOICE = "af_heart"  # check per-voice CC-BY before shipping (SHIPPING.md)
 TTS_SPEED = 1.15        # Kokoro speed; >1 speaks faster
 
-# Clause splitter (D5): greedy first fragment, longer later chunks.
+# Clause splitter (D5): greedy first fragment, then ramp up.
+# The ramp matters — going straight from 18 to 90 chars left an audible gap a
+# second in: the 18-char clause is only ~1.1 s of speech but the 90-char one
+# takes ~1.4 s to synthesise, so playback drained before it arrived. Each step
+# must buy enough playing time to cover synthesising the next.
 CLAUSE_FIRST_CHARS = 18   # smaller = first audio starts sooner
+CLAUSE_SECOND_CHARS = 45
 CLAUSE_REST_CHARS = 90
 
 # ── VAD / endpointing (Stage 2) ────────────────────────────────────────────
