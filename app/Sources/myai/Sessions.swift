@@ -77,13 +77,11 @@ struct SessionBar: View {
                 .buttonStyle(.plain)
                 .help("New chat")
 
-                if chat.openTabs.count > 1 {
-                    Button { chat.closeTab(chat.currentSessionID) } label: {
-                        Image(systemName: "xmark.circle")
-                    }
-                    .buttonStyle(.plain)
-                    .help("Close this chat")
+                Button { chat.closeTab(chat.currentSessionID) } label: {
+                    Image(systemName: "xmark.circle")
                 }
+                .buttonStyle(.plain)
+                .help("Close this chat (it stays in History)")
             }
             .font(.callout)
             .padding(.horizontal, 12)
