@@ -137,10 +137,16 @@ final class ChatModel: ObservableObject {
         client.send(Wire.encode("session_delete", ["id": id]))
     }
 
+    /// Closing the last chat starts a fresh one rather than leaving an empty
+    /// window — there is always exactly one conversation in front of you.
     func closeTab(_ id: Int) {
-        guard openTabs.count > 1 else { return }   // never leave zero chats open
         openTabs.removeAll { $0 == id }
-        if id == currentSessionID, let next = openTabs.last { openSession(next) }
+        if openTabs.isEmpty {
+            messages = []
+            newSession()
+        } else if id == currentSessionID, let next = openTabs.last {
+            openSession(next)
+        }
     }
 
     func title(of id: Int) -> String {
