@@ -37,6 +37,9 @@ final class ChatModel: ObservableObject {
     /// Chats showing in the tab strip. One is the norm — the strip only appears
     /// once a second is opened, so the default shape stays "one ongoing chat".
     @Published var openTabs: [Int] = []
+    /// Opt-in networking. Off by default: the app is offline unless asked.
+    @Published var dailyUpdates = false
+    @Published var location = ""
 
     private let client = WebSocketClient()
     private let audio = AudioEngine()
@@ -100,6 +103,9 @@ final class ChatModel: ObservableObject {
             activeTurn = nil
         case "tool":
             handleTool(msg)
+        case "settings":
+            dailyUpdates = msg["daily_updates"] as? Bool ?? false
+            location = msg["location"] as? String ?? ""
         case "sessions":
             if let items = msg["items"] as? [[String: Any]] {
                 sessions = items.compactMap(ChatSession.init(json:))
@@ -147,6 +153,13 @@ final class ChatModel: ObservableObject {
         } else if id == currentSessionID, let next = openTabs.last {
             openSession(next)
         }
+    }
+
+    /// Push the networking preferences. The backend echoes back what it stored,
+    /// so the toggle always reflects reality rather than intent.
+    func saveSettings() {
+        client.send(Wire.encode("settings", ["daily_updates": dailyUpdates,
+                                             "location": location]))
     }
 
     func title(of id: Int) -> String {

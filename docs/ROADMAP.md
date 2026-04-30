@@ -91,6 +91,23 @@ splitter jumped 18→90 chars, which starved playback about a second in — meas
   answer comes *from* the app via `tool_result.data`), `set_timer` (on-screen
   countdown), `open_link` (a button, never an automatic open).
 
+## Stage 4.5 — Daily briefing + retrieval (opt-in)  ✓ DONE
+
+- `embed.py` — bge-small BERT encoder written directly against MLX, validated
+  against torch (D-EMBED). Also upgrades conversational recall from keyword-only.
+- `feeds.py` — the only networked code: Open-Meteo weather + RSS headlines,
+  stdlib-only, fixed source list, hard timeouts, failure never fatal.
+- `briefing.py` — builds the day's briefing into the *primed prefix* so it costs
+  nothing per turn (D-BRIEFING), archives everything fetched for retrieval, and
+  gates retrieval on a measured cosine floor so latency stays flat as it grows.
+- Off by default; one switch in the app, with the weather city typed by hand
+  rather than read from CoreLocation.
+
+### Still open here
+- **Live web search.** Deferred deliberately: no free search API exists, so this
+  is a product decision (user-supplied key vs proxying) not just code. The tool
+  seam is ready — it wants speculative speech ("let me check…") while fetching.
+
 ## Stage 5 — Ship
 
 - First-launch model downloader: resumable, checksummed, cancellable.

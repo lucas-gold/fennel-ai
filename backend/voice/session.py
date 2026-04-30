@@ -95,6 +95,19 @@ class Session:
             messages=[{"role": r["role"], "text": r["content"]} for r in rows]))
         await self.send_sessions()
 
+    async def apply_system(self, system: str) -> None:
+        """Adopt a new system prefix (the daily briefing arriving mid-session).
+
+        Waits for any in-flight turn rather than superseding it: this fires once
+        a day, off the user's initiative, and cutting a reply off mid-sentence to
+        install a news update would be a strange thing to do to someone."""
+        if system == self._system:
+            return
+        if self._turn_task and not self._turn_task.done():
+            await self._turn_task
+        self._system = system
+        self._rebuild()
+
     async def send_sessions(self) -> None:
         await self._send_control(P.encode("sessions",
                                           items=self._store.list_sessions(),

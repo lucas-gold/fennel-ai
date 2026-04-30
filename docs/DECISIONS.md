@@ -233,3 +233,69 @@ The UI deliberately under-sells multiplicity. One ongoing conversation is the
 default and the tab strip stays hidden until a second chat is actually open;
 older chats live behind a History menu instead of accumulating as tabs. Closing
 a tab and deleting a chat are kept separate — one hides, one destroys.
+
+---
+
+## D-BRIEFING — Freshness is a prefix problem, not a training problem
+
+The model's weights are frozen and stay frozen. "Updating the model with today's
+news" would mean fine-tuning daily: expensive, lossy, and it degrades general
+ability every pass. Retrieval puts the facts in the *prompt* instead.
+
+The insight that makes it cheap: **the daily briefing is identical all day**, so
+it is prefix material, not per-turn material. It goes through the same
+`LLM.prime()` path as the tool schemas (D-PREFIX) — prefilled once at startup,
+then free for every turn that day. Measured:
+
+| | prime (once) | TTFT | decode |
+|---|---|---|---|
+| prefix alone (1644 tok) | 8.5 s | 0.41 s | 24 tok/s |
+| + briefing (2961 tok) | 15.8 s | 0.48 s | 21 tok/s |
+
+So the briefing is **budgeted, not exhaustive**. TTFT barely moves, but decode
+slows ~12% because attention runs over a longer KV cache — that is the real
+price, and it is why `BRIEFING_MAX_CHARS` exists. Everything fetched still lands
+in the archive, where it costs nothing until retrieved.
+
+It is also *replaced* daily, never appended, so the prefix is the same size in
+year three as on day one. Only the archive grows (~150 KB/day of vectors), and
+`ARCHIVE_KEEP_DAYS` bounds that.
+
+**The gate is the load-bearing part.** Archive retrieval injects nothing unless
+the query is topically close — measured separation on real feeds: on-topic
+queries score 0.55–0.66 cosine, off-topic 0.42–0.46, so the floor sits at 0.50
+with a minimum query length for turns like "thanks". Declining costs zero tokens,
+which is what keeps latency flat no matter how large the archive grows. FTS
+refines the ranking but never gates: it returns *something* for any query at all,
+so on its own it would drag noise into every prompt.
+
+Privacy is two separate switches, not one. The daily fetch hits a fixed source
+list and reveals nothing about the user; live search would send their actual
+question to a third party. Weather uses a city the user types, not CoreLocation.
+Default is off, and offline remains the app's normal state.
+
+---
+
+## D-EMBED — A BERT encoder written against MLX, rather than a dependency
+
+Retrieval needs embeddings, and every packaged option cost more than the code
+did: `mlx-embeddings` pulls mlx-vlm + opencv + uvicorn, sentence-transformers
+pulls its own stack. `voice/embed.py` is ~120 lines, adds no new dependency, and
+runs on the GPU beside the LLM. bge-small-en-v1.5: 33M params, 384 dims, MIT
+(the licence matters — D-DISTRIB).
+
+Validated rather than assumed: `tools/check_embed.py` checks the vectors against
+transformers/torch on identical weights (cosine 1.000, max abs diff 2e-7).
+Retrieval that is quietly wrong is worse than no retrieval.
+
+Two MLX details cost real debugging time and are worth remembering:
+- **`mx.linalg.norm` is CPU-stream only.** It fails on the `asyncio.to_thread`
+  workers we embed from; the L2 norm is computed with `rsqrt` instead.
+- **`mx.load` returns lazy arrays**, and forcing them the first time needs the
+  CPU stream — which the worker threads don't have. Every weight is `mx.eval`ed
+  at construction, on the main thread.
+
+And one that was worse: **concurrent MLX use from two threads crashes natively**,
+no Python traceback, the process simply exits. Re-priming when the briefing lands
+raced with a live generation. `LLM` now holds a re-entrant lock across
+`stream_reply`, `complete` and `prime`.

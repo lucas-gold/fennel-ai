@@ -14,3 +14,9 @@ soundfile             # audio file I/O (tools/tests)
 scipy                 # resampling in tools/tests
 
 # Stage 4  SQLite FTS5 is in the Python stdlib
+
+# Stage 4.5 — deliberately nothing new.
+# Embeddings: voice/embed.py implements the BERT encoder against MLX directly
+#   (transformers + huggingface-hub already come with mlx-lm). The packaged
+#   alternatives were worse: mlx-embeddings drags in mlx-vlm + opencv + uvicorn.
+# Feeds: urllib + xml.etree from the stdlib, no requests/feedparser.

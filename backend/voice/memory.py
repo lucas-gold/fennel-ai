@@ -43,8 +43,9 @@ def _ago(ts: float, now: Optional[datetime] = None) -> str:
 
 
 class Memory:
-    def __init__(self, store: Store) -> None:
+    def __init__(self, store: Store, retriever=None) -> None:
         self._store = store
+        self._retriever = retriever
 
     # ── the context message (facts + summary) ──────────────────────────────
 
@@ -76,6 +77,20 @@ class Memory:
             who = "they said" if h["role"] == "user" else "you said"
             text = " ".join(h["content"].split())[:160]
             parts.append(f"recall ({_ago(h['ts'], now)}, {who}): {text}")
+
+        # News archive. Gated and hard-capped: on most turns this adds nothing,
+        # which is what keeps per-turn latency flat as the archive grows.
+        if self._retriever is not None:
+            budget = config.RETRIEVAL_MAX_CHARS
+            for c in self._retriever.search(user_text, k=3):
+                line = f"news ({c['day']}, {c['source']}): {c['title']}"
+                if c.get("body"):
+                    line += f" — {c['body']}"
+                line = line[:budget]
+                budget -= len(line)
+                parts.append(line)
+                if budget <= 0:
+                    break
         return "<context>\n" + "\n".join(parts) + "\n</context>\n"
 
     # ── the verbatim window ────────────────────────────────────────────────

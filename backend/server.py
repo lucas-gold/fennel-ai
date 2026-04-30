@@ -15,6 +15,8 @@ import websockets
 
 import config
 import protocol as P
+from voice import embed
+from voice.briefing import Briefing, Retriever
 from voice.llm import LLM
 from voice.memory import Memory
 from voice.session import Session
@@ -28,8 +30,19 @@ _llm: LLM
 _tts: KokoroTTS
 _store: Store
 _memory: Memory
+_briefing: Briefing
 _system: str
 _system_day: date
+
+
+def _build_system() -> str:
+    """Persona + tools + day table, plus today's briefing when the user has
+    opted in. All of it is stable for the whole day, which is exactly what makes
+    it primeable — see D-BRIEFING."""
+    base = system_prompt(config.LLM_SYSTEM)
+    if brief := _briefing.cached():
+        return f"{base}\n\n{brief}"
+    return base
 
 
 def _current_system() -> str:
@@ -37,9 +50,31 @@ def _current_system() -> str:
     past midnight (the prompt's day table would otherwise be wrong)."""
     global _system, _system_day
     if date.today() != _system_day:
-        _system, _system_day = system_prompt(config.LLM_SYSTEM), date.today()
+        _system, _system_day = _build_system(), date.today()
         _llm.prime(_system)
     return _system
+
+
+async def _refresh_briefing(session: Session) -> None:
+    """Fetch today's briefing and fold it into the primed prefix.
+
+    Runs in the background on the first connection of the day: the network is
+    slow and unreliable, and a voice assistant must never wait on it. Until it
+    lands, the model simply runs without a briefing.
+    """
+    global _system, _system_day
+    if not _briefing.is_stale():
+        return
+    text = await asyncio.to_thread(_briefing.build, embed.shared())
+    if not text:
+        return
+    _system, _system_day = _build_system(), date.today()
+    # Hand the session the new prefix BEFORE priming. A turn arriving during the
+    # prime blocks on the LLM lock either way, but this way it wakes up using the
+    # new prefix on a warm cache rather than the stale one.
+    await session.apply_system(_system)
+    await asyncio.to_thread(_llm.prime, _system)
+    print("[briefing] folded into the primed prefix", flush=True)
 
 
 async def handler(ws) -> None:
@@ -53,6 +88,7 @@ async def handler(ws) -> None:
                       _store, _memory, system=_current_system())
     await ws.send(P.encode("state", value="idle"))
     await session.open_session()          # resume where the user left off
+    asyncio.create_task(_refresh_briefing(session))  # never blocks the conversation
     try:
         async for raw in ws:
             if isinstance(raw, (bytes, bytearray)):
@@ -66,6 +102,13 @@ async def handler(ws) -> None:
                                             speak=bool(msg.get("speak", False)))
                 elif msg["type"] == "tool_result":
                     session.feed_tool_result(msg)
+                elif msg["type"] == "settings":
+                    _briefing.configure(enabled=msg.get("daily_updates"),
+                                        place=msg.get("location"))
+                    asyncio.create_task(_refresh_briefing(session))
+                    await ws.send(P.encode("settings",
+                                           daily_updates=_briefing.enabled,
+                                           location=_briefing.place))
                 elif msg["type"] == "session_list":
                     await session.send_sessions()
                 elif msg["type"] == "session_open":
@@ -81,9 +124,12 @@ async def handler(ws) -> None:
 
 
 async def main() -> None:
-    global _stt, _llm, _tts, _store, _memory, _system, _system_day
+    global _stt, _llm, _tts, _store, _memory, _briefing, _system, _system_day
     _store = Store()
-    _memory = Memory(_store)
+    _briefing = Briefing(_store)
+    # Embeddings power both news retrieval and conversational recall; loading is
+    # lazy and optional, so a failure degrades to keyword search (embed.shared).
+    _memory = Memory(_store, Retriever(_store, embed.shared()))
     print("loading models "
           f"({config.LLM_MODEL.split('/')[-1]}, "
           f"{config.STT_MODEL.split('/')[-1]}, "
@@ -95,9 +141,14 @@ async def main() -> None:
     await asyncio.to_thread(_stt.warmup)
     await asyncio.to_thread(_tts.warmup)
     await asyncio.to_thread(_llm.warmup)
-    # Prefill the tool schemas + day table now rather than during the user's
-    # first sentence — it is ~640 tokens of stable prefix (D4).
-    _system, _system_day = system_prompt(config.LLM_SYSTEM), date.today()
+    # Fetch today's briefing here, before we start listening, so the common case
+    # (backend and app started together) never races the prime against a turn.
+    # The on-connect refresh then only fires when the day rolls over mid-run.
+    if _briefing.is_stale():
+        await asyncio.to_thread(_briefing.build, embed.shared())
+    # Prefill tool schemas + day table + briefing now rather than during the
+    # user's first sentence — ~1600-2200 tokens of stable prefix (D4).
+    _system, _system_day = _build_system(), date.today()
     await asyncio.to_thread(_llm.prime, _system)
     print(f"my_ai backend listening on ws://{config.HOST}:{config.PORT}  "
           f"(tier={config.TIER})", flush=True)
