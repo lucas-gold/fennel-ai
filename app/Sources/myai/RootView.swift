@@ -23,6 +23,7 @@ private struct HomePanel: View {
                     .frame(width: 8, height: 8)
                 Text(chat.connected ? "Backend" : "Offline")
                     .font(.caption).foregroundStyle(.secondary)
+                SettingsMenu()
             }
 
             VoiceOrb(state: chat.state, listening: chat.listening, level: chat.level)
@@ -54,6 +55,36 @@ private struct HomePanel: View {
         }
         .padding()
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+/// Everything network-related lives behind this one control, off by default.
+///
+/// The wording is deliberate: this app's whole claim is that nothing leaves the
+/// machine, so the exception has to be legible. The daily briefing fetches a
+/// fixed list of feeds and reveals nothing about the user — which is why it is
+/// its own switch, and why the city is typed rather than read from CoreLocation.
+private struct SettingsMenu: View {
+    @EnvironmentObject var chat: ChatModel
+
+    var body: some View {
+        Menu {
+            Toggle("Daily updates", isOn: Binding(
+                get: { chat.dailyUpdates },
+                set: { chat.dailyUpdates = $0; chat.saveSettings() }))
+            Text(chat.dailyUpdates
+                 ? "Fetches weather and headlines once a day."
+                 : "Off — the app makes no network requests.")
+            Divider()
+            Text("Weather city")
+            TextField("e.g. Toronto", text: $chat.location)
+                .onSubmit { chat.saveSettings() }
+        } label: {
+            Image(systemName: chat.dailyUpdates ? "wifi" : "wifi.slash")
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+        .help("Network settings")
     }
 }
 

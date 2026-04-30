@@ -53,6 +53,43 @@ CREATE TABLE IF NOT EXISTS facts (
     value   TEXT NOT NULL,
     updated REAL NOT NULL
 );
+CREATE TABLE IF NOT EXISTS settings (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
+
+-- Daily briefing: one row per day, held verbatim because it is prefilled into
+-- the prompt prefix and must be byte-identical all day (D-PREFIX).
+CREATE TABLE IF NOT EXISTS briefings (
+    day     TEXT PRIMARY KEY,
+    text    TEXT NOT NULL,
+    created REAL NOT NULL
+);
+
+-- The retrievable archive. Chunks outlive the day their briefing was current,
+-- so "what was that story last week" still works; `vec` is a raw float32
+-- buffer, which is plenty at this scale (a year is ~50 MB and one numpy dot).
+CREATE TABLE IF NOT EXISTS chunks (
+    id     INTEGER PRIMARY KEY AUTOINCREMENT,
+    day    TEXT NOT NULL,
+    source TEXT NOT NULL,
+    title  TEXT NOT NULL,
+    body   TEXT NOT NULL DEFAULT '',
+    link   TEXT NOT NULL DEFAULT '',
+    ts     REAL NOT NULL,
+    vec    BLOB
+);
+CREATE INDEX IF NOT EXISTS chunks_by_day ON chunks(day);
+CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts
+    USING fts5(title, body, content='chunks', content_rowid='id');
+CREATE TRIGGER IF NOT EXISTS chunks_ai AFTER INSERT ON chunks BEGIN
+    INSERT INTO chunks_fts(rowid, title, body) VALUES (new.id, new.title, new.body);
+END;
+CREATE TRIGGER IF NOT EXISTS chunks_ad AFTER DELETE ON chunks BEGIN
+    INSERT INTO chunks_fts(chunks_fts, rowid, title, body)
+        VALUES ('delete', old.id, old.title, old.body);
+END;
+
 CREATE TABLE IF NOT EXISTS summaries (
     session_id INTEGER PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
     summary    TEXT NOT NULL,
@@ -181,6 +218,98 @@ class Store:
                                                          upto_id=excluded.upto_id""",
                 (session_id, summary, upto_id))
             self._db.commit()
+
+    # ── settings ───────────────────────────────────────────────────────────
+
+    def setting(self, key: str, default: str = "") -> str:
+        with self._lock:
+            row = self._db.execute("SELECT value FROM settings WHERE key = ?",
+                                   (key,)).fetchone()
+        return row["value"] if row else default
+
+    def set_setting(self, key: str, value: str) -> None:
+        with self._lock:
+            self._db.execute(
+                """INSERT INTO settings (key, value) VALUES (?,?)
+                   ON CONFLICT(key) DO UPDATE SET value=excluded.value""",
+                (key, value))
+            self._db.commit()
+
+    # ── daily briefing + archive ───────────────────────────────────────────
+
+    def briefing(self, day: str) -> Optional[str]:
+        with self._lock:
+            row = self._db.execute("SELECT text FROM briefings WHERE day = ?",
+                                   (day,)).fetchone()
+        return row["text"] if row else None
+
+    def set_briefing(self, day: str, text: str) -> None:
+        with self._lock:
+            self._db.execute(
+                """INSERT INTO briefings (day, text, created) VALUES (?,?,?)
+                   ON CONFLICT(day) DO UPDATE SET text=excluded.text""",
+                (day, text, time.time()))
+            self._db.commit()
+
+    def add_chunks(self, day: str, rows: list[dict]) -> None:
+        """rows: {source,title,body,link,vec(np.ndarray|None)}"""
+        now = time.time()
+        with self._lock:
+            self._db.execute("DELETE FROM chunks WHERE day = ?", (day,))  # idempotent rebuild
+            self._db.executemany(
+                """INSERT INTO chunks (day, source, title, body, link, ts, vec)
+                   VALUES (?,?,?,?,?,?,?)""",
+                [(day, r["source"], r["title"], r.get("body", ""), r.get("link", ""),
+                  now, None if r.get("vec") is None else r["vec"].astype("float32").tobytes())
+                 for r in rows])
+            self._db.commit()
+
+    def all_chunk_vectors(self) -> tuple[list[int], Optional["np.ndarray"]]:
+        """Every stored vector as one matrix, for a single dot product. At ~50 MB
+        a year this stays far cheaper than any index would be to maintain."""
+        import numpy as np
+        with self._lock:
+            rows = self._db.execute(
+                "SELECT id, vec FROM chunks WHERE vec IS NOT NULL ORDER BY id").fetchall()
+        if not rows:
+            return [], None
+        ids = [int(r["id"]) for r in rows]
+        mat = np.frombuffer(b"".join(r["vec"] for r in rows), dtype="float32")
+        return ids, mat.reshape(len(ids), -1)
+
+    def chunks_by_id(self, ids: list[int]) -> list[dict]:
+        if not ids:
+            return []
+        qs = ",".join("?" * len(ids))
+        with self._lock:
+            rows = self._db.execute(
+                f"SELECT id, day, source, title, body, link FROM chunks WHERE id IN ({qs})",
+                ids).fetchall()
+        by_id = {int(r["id"]): dict(r) for r in rows}
+        return [by_id[i] for i in ids if i in by_id]
+
+    def search_chunks_fts(self, query: str, limit: int = 6) -> list[int]:
+        terms = [t for t in _FTS_UNSAFE.sub(" ", query).split() if len(t) > 2]
+        if not terms:
+            return []
+        try:
+            with self._lock:
+                rows = self._db.execute(
+                    """SELECT rowid FROM chunks_fts WHERE chunks_fts MATCH ?
+                       ORDER BY bm25(chunks_fts) LIMIT ?""",
+                    (" OR ".join(terms), limit)).fetchall()
+        except sqlite3.OperationalError:
+            return []
+        return [int(r["rowid"]) for r in rows]
+
+    def prune_chunks(self, keep_days: int) -> int:
+        """Bound the archive so storage can't grow without limit."""
+        cutoff = time.time() - keep_days * 86400
+        with self._lock:
+            cur = self._db.execute("DELETE FROM chunks WHERE ts < ?", (cutoff,))
+            self._db.execute("DELETE FROM briefings WHERE created < ?", (cutoff,))
+            self._db.commit()
+            return cur.rowcount
 
     # ── recall ─────────────────────────────────────────────────────────────
 

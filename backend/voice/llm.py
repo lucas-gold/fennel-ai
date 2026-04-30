@@ -37,6 +37,11 @@ class LLM:
         self._cache = make_prompt_cache(self.model)
         self._cached_ids: list[int] = []
         self._prime_len = 0
+        # One model, one KV cache, several worker threads (generation, background
+        # summarising, re-priming when the daily briefing lands). Running two of
+        # those at once crashes MLX natively — no Python traceback, the process
+        # just dies — so every entry point that touches the model takes this.
+        self._lock = threading.RLock()
 
     def reset(self) -> None:
         """New conversation: drop everything the conversation added, but keep
@@ -56,8 +61,9 @@ class LLM:
         this machine prefills at only ~200 tok/s: without priming, the first
         turn of every session pays ~4.7 s before the model says anything.
         """
-        self._prime_len = 0
-        self.reset()
+        with self._lock:
+            self._prime_len = 0
+            self.reset()
         # Prime only the span that a real prompt genuinely begins with, so the
         # cached tokens are a true prefix and `_common_prefix` reuses all of it.
         probe = self._prompt_ids([{"role": "system", "content": system},
@@ -67,17 +73,18 @@ class LLM:
             add_generation_prompt=False, tokenize=True, tools=TOOLS))
         n = _common_prefix(sys_only, probe)
 
-        ids = mx.array(probe[:n])
-        step = 512      # chunked like mlx-lm's own prefill: full-length logits
-        while ids.size > step:      # for 900 positions would spike ~0.5 GB
-            self.model(ids[:step][None], cache=self._cache)
+        with self._lock:
+            ids = mx.array(probe[:n])
+            step = 512  # chunked like mlx-lm's own prefill: full-length logits
+            while ids.size > step:      # for 900 positions would spike ~0.5 GB
+                self.model(ids[:step][None], cache=self._cache)
+                mx.eval([c.state for c in self._cache])
+                ids = ids[step:]
+            self.model(ids[None], cache=self._cache)
             mx.eval([c.state for c in self._cache])
-            ids = ids[step:]
-        self.model(ids[None], cache=self._cache)
-        mx.eval([c.state for c in self._cache])
 
-        self._cached_ids = probe[:n]
-        self._prime_len = n
+            self._cached_ids = probe[:n]
+            self._prime_len = n
         print(f"[llm] primed {n} prefix tokens", flush=True)
 
     def complete(self, messages: list[Message], max_tokens: int = 160) -> str:
@@ -88,12 +95,13 @@ class LLM:
         make the user's next turn pay a full re-prefill.
         """
         prompt = self._prompt_ids(messages)
-        cache = make_prompt_cache(self.model)
         out: list[str] = []
-        for resp in stream_generate(self.model, self.tokenizer, prompt=prompt,
-                                    max_tokens=max_tokens, prompt_cache=cache):
-            if resp.text:
-                out.append(resp.text)
+        with self._lock:
+            cache = make_prompt_cache(self.model)
+            for resp in stream_generate(self.model, self.tokenizer, prompt=prompt,
+                                        max_tokens=max_tokens, prompt_cache=cache):
+                if resp.text:
+                    out.append(resp.text)
         return "".join(out).strip()
 
     def warmup(self) -> None:
@@ -114,38 +122,42 @@ class LLM:
     def stream_reply(self, messages: list[Message]) -> Iterator[str]:
         """Blocking generator of text chunks; reuses the KV prefix (D4)."""
         prompt_ids = self._prompt_ids(messages)
-        common = _common_prefix(prompt_ids, self._cached_ids)
+        # The lock is held for the whole generation — acquired on the first
+        # next(), released when the generator finishes or is closed by barge-in —
+        # so a re-prime or a background summary cannot land mid-flight.
+        with self._lock:
+            common = _common_prefix(prompt_ids, self._cached_ids)
 
-        # Divergence (rare in append-only chat, e.g. a re-tokenized boundary):
-        # trim the stale tail so the cache holds exactly the shared prefix.
-        if common < len(self._cached_ids):
-            trim_prompt_cache(self._cache, len(self._cached_ids) - common)
-            self._cached_ids = self._cached_ids[:common]
+            # Divergence (rare in append-only chat, e.g. a re-tokenized boundary):
+            # trim the stale tail so the cache holds exactly the shared prefix.
+            if common < len(self._cached_ids):
+                trim_prompt_cache(self._cache, len(self._cached_ids) - common)
+                self._cached_ids = self._cached_ids[:common]
 
-        delta = prompt_ids[common:]
-        print(f"[llm] prefill delta={len(delta)} "
-              f"(reused prefix {common}/{len(prompt_ids)})", flush=True)
+            delta = prompt_ids[common:]
+            print(f"[llm] prefill delta={len(delta)} "
+                  f"(reused prefix {common}/{len(prompt_ids)})", flush=True)
 
-        generated: list[int] = []
-        completed = False
-        try:
-            for resp in stream_generate(
-                self.model, self.tokenizer, prompt=delta,
-                max_tokens=config.LLM_MAX_TOKENS, prompt_cache=self._cache,
-            ):
-                generated.append(resp.token)
-                if resp.text:
-                    yield resp.text
-            completed = True
-        finally:
-            if completed:
-                # The cache now physically holds prompt_ids + generated.
-                self._cached_ids = prompt_ids + generated
-            else:
-                # Interrupted (generator closed by barge-in): the cache holds
-                # tokens the user never fully heard — drop it so next turn does a
-                # clean re-prefill (D3/D4).
-                self.reset()
+            generated: list[int] = []
+            completed = False
+            try:
+                for resp in stream_generate(
+                    self.model, self.tokenizer, prompt=delta,
+                    max_tokens=config.LLM_MAX_TOKENS, prompt_cache=self._cache,
+                ):
+                    generated.append(resp.token)
+                    if resp.text:
+                        yield resp.text
+                completed = True
+            finally:
+                if completed:
+                    # The cache now physically holds prompt_ids + generated.
+                    self._cached_ids = prompt_ids + generated
+                else:
+                    # Interrupted (generator closed by barge-in): the cache holds
+                    # tokens the user never fully heard — drop it so next turn does
+                    # a clean re-prefill (D3/D4).
+                    self.reset()
 
     async def astream(self, messages: list[Message],
                       stop: Optional["threading.Event"] = None) -> AsyncIterator[str]:

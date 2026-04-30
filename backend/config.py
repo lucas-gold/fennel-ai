@@ -69,6 +69,28 @@ CLAUSE_FIRST_CHARS = 18   # smaller = first audio starts sooner
 CLAUSE_SECOND_CHARS = 45
 CLAUSE_REST_CHARS = 90
 
+# ── Embeddings / retrieval (Stage 5) ───────────────────────────────────────
+# MIT-licensed (D-DISTRIB), 33M params, 384 dims. Hand-rolled encoder in
+# voice/embed.py so no extra dependency ships with it.
+EMBED_MODEL = "BAAI/bge-small-en-v1.5"
+EMBED_MAX_TOKENS = 256
+
+# ── Daily briefing (opt-in; the only networked feature) ────────────────────
+# The briefing lives in the PRIMED PREFIX, so it costs nothing per turn — but a
+# longer prefix does slow decode (measured 24 -> 21 tok/s at ~1300 tokens), so
+# it is budgeted. ~2400 chars is roughly 600 tokens.
+BRIEFING_MAX_CHARS = 2400
+# Everything fetched is archived for retrieval even if it didn't fit the prefix.
+# Pruned so storage is bounded: ~150 KB/day of vectors, so a year is ~50 MB.
+ARCHIVE_KEEP_DAYS = 120
+# Cosine floor, and the gate that decides whether to retrieve at all. Measured
+# separation on real feeds: on-topic queries score 0.55-0.66, off-topic 0.42-0.46.
+# Below the floor we inject NOTHING — noise costs prefill and misleads the model.
+RETRIEVAL_MIN_SCORE = 0.50
+# Hard cap on retrieved context per turn. This is the number that keeps latency
+# constant as the archive grows — never raise it to "fit more in".
+RETRIEVAL_MAX_CHARS = 700
+
 # ── VAD / endpointing (Stage 2) ────────────────────────────────────────────
 # Latency hides in turn-taking, not the models — tune END_SILENCE_MS first (D2).
 # Absolute so it resolves no matter the working directory the server is launched from.
