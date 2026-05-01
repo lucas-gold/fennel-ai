@@ -139,6 +139,44 @@ TOOLS: list[dict] = [
     {
         "type": "function",
         "function": {
+            "name": "open_app",
+            "description": (
+                "Launch an app on the user's Mac by name — Spotify, Notes, "
+                "Safari, Xcode. Use when they ask you to open or start one."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "description": "App name as it appears in Applications."},
+                },
+                "required": ["name"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "run_shortcut",
+            "description": (
+                "Run one of the user's macOS Shortcuts by name. This is how you "
+                "reach anything the Shortcuts app can do — smart lights and "
+                "other HomeKit scenes, sending a text, playing a playlist, "
+                "whatever they have set up. Only call it when they name a "
+                "shortcut or clearly refer to one; you are told if it doesn't "
+                "exist, along with what does."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "description": "The shortcut's exact name."},
+                },
+                "required": ["name"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "open_link",
             "description": (
                 "Put a link on screen as a button the user can click — a website, "
@@ -233,7 +271,7 @@ TOOL_NAMES = {t["function"]["name"] for t in TOOLS}
 # run another LLM round after these, even if the model already said something —
 # skipping it (which is right for side-effecting tools) leaves the user with
 # "let me look that up" and then silence.
-ANSWERING_TOOLS = {"search_web", "agenda"}
+ANSWERING_TOOLS = {"search_web", "agenda", "run_shortcut"}
 
 
 # ── streaming split ────────────────────────────────────────────────────────
@@ -403,6 +441,14 @@ def normalize(name: str, args: dict) -> tuple[dict, dict]:
         # The fetch itself happens in Session._run_tool: it's the network, so it
         # needs the online setting checked and a thread to run on.
         return {"query": query}, {"ok": True, "query": query}
+
+    if name in ("open_app", "run_shortcut"):
+        label = str(args.get("name", "")).strip()
+        if not label:
+            return {}, {"ok": False, "error": "a name is required"}
+        # The app does the launching; it knows what's installed and owns the
+        # automation permission. Backend just normalizes.
+        return {"name": label}, {"ok": True, "name": label}
 
     if name == "open_link":
         url = str(args.get("url", "")).strip()

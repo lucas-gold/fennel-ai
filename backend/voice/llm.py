@@ -110,14 +110,46 @@ class LLM:
             pass
         self.reset()
 
-    def _prompt_ids(self, messages: list[Message]) -> list[int]:
+    def _prompt_ids(self, messages: list[Message],
+                    generation: bool = True) -> list[int]:
         # `tools=` renders the signatures into the system block — stable prefix,
         # so tool-calling costs one prefill per session, not one per turn (D4).
         return list(
             self.tokenizer.apply_chat_template(
-                messages, add_generation_prompt=True, tokenize=True, tools=TOOLS
+                messages, add_generation_prompt=generation, tokenize=True, tools=TOOLS
             )
         )
+
+    def warm(self, messages: list[Message]) -> None:
+        """Prefill a conversation without generating, so the next turn starts hot.
+
+        Used after the verbatim window is trimmed, which changes the prompt at
+        the front and therefore costs a full re-prefill — measured at 2.2 s,
+        landing on one unlucky turn in every ~17. Doing it during a lull instead
+        moves that spike off the conversation entirely.
+
+        No generation prompt: the next real turn appends a user message first,
+        so the assistant header would not be a prefix of it.
+        """
+        ids = self._prompt_ids(messages, generation=False)
+        with self._lock:
+            common = _common_prefix(ids, self._cached_ids)
+            if common < len(self._cached_ids):
+                trim_prompt_cache(self._cache, len(self._cached_ids) - common)
+                self._cached_ids = self._cached_ids[:common]
+            delta = ids[common:]
+            if not delta:
+                return
+            arr = mx.array(delta)
+            step = 512
+            while arr.size > step:
+                self.model(arr[:step][None], cache=self._cache)
+                mx.eval([c.state for c in self._cache])
+                arr = arr[step:]
+            self.model(arr[None], cache=self._cache)
+            mx.eval([c.state for c in self._cache])
+            self._cached_ids = ids
+        print(f"[llm] warmed {len(delta)} tokens during idle", flush=True)
 
     def stream_reply(self, messages: list[Message]) -> Iterator[str]:
         """Blocking generator of text chunks; reuses the KV prefix (D4)."""

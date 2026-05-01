@@ -367,3 +367,46 @@ generation when the model already spoke, which is right when prose *is* the
 confirmation. For a tool whose result is the answer it is catastrophic: the first
 search turn said "Let me look that up." and then ended. `ANSWERING_TOOLS` marks
 the tools whose results must be read back.
+
+---
+
+## D-IDLE — Maintenance belongs in the pauses, not on the turn boundary
+
+Two background jobs hold the LLM lock for seconds: the rolling summary, and
+trimming the verbatim window (which changes the prompt at the front, so the next
+turn pays a full re-prefill). Both were firing the instant a turn ended —
+precisely when the user is most likely to speak next.
+
+Measured over 22 turns: 21 of them at 0.37–0.45 s and **one at 2.20 s**, the
+window trim. That single spike is what "sometimes it takes a second" actually is;
+an average would have hidden it completely, which is why the benchmark prints
+every turn rather than a mean.
+
+Both now wait for `SUMMARY_IDLE_S` of quiet, and `_start_turn` cancels them if
+the user comes back first. The trim additionally pre-warms the rebuilt prompt via
+`LLM.warm()` — prefill without generation, and without the assistant header,
+since the next real turn appends a user message before it.
+
+The general rule: **anything that takes the model's lock must run in a pause and
+be cancellable.** A background chore that blocks a reply is worse than no chore.
+
+---
+
+## D-MAC — Delegate to Shortcuts instead of integrating each service
+
+HomeKit has no macOS framework available to third-party apps, so lights and
+scenes cannot be driven directly. But Shortcuts *can* drive them — along with
+sending messages, controlling media, and whatever else the user has built.
+
+`run_shortcut` therefore delegates to the user's own Shortcuts library rather
+than integrating services one at a time. One tool reaches every automation they
+already own, the blast radius stays inside something they authored and can
+inspect, and it needs no new entitlement per service. On a miss it returns the
+available names so the assistant can say what *does* exist.
+
+`open_app` is the same shape and resolves by bundle id first, then the usual
+install directories, since `NSWorkspace` can't find everything by name alone.
+
+Deliberately NOT auto-sending messages or email. Those are irreversible and
+outward-facing; the right pattern is the one `open_link` already uses — put it
+on screen and let the user press the button.
