@@ -35,22 +35,25 @@ struct SessionBar: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 8) {
+            HStack(spacing: 4) {
                 Text(chat.title(of: chat.currentSessionID))
-                    .font(.subheadline.weight(.medium))
+                    .font(Theme.title(13, .semibold))
                     .lineLimit(1)
+                if chat.state == .speaking {
+                    Image(systemName: "speaker.wave.2.fill")
+                        .font(.system(size: 9))
+                        .foregroundStyle(.secondary)
+                        .transition(.opacity)
+                }
                 Spacer(minLength: 8)
 
                 Menu {
-                    if chat.sessions.isEmpty {
-                        Text("No saved chats")
-                    }
+                    if chat.sessions.isEmpty { Text("No saved chats") }
                     ForEach(chat.sessions) { s in
                         Button {
                             chat.openSession(s.id)
                         } label: {
-                            Text(s.id == chat.currentSessionID
-                                 ? "✓ \(s.title)" : s.title)
+                            Text(s.id == chat.currentSessionID ? "\u{2713} \(s.title)" : s.title)
                             Text(s.subtitle)
                         }
                     }
@@ -58,38 +61,34 @@ struct SessionBar: View {
                         Divider()
                         Menu("Delete") {
                             ForEach(chat.sessions) { s in
-                                Button(s.title, role: .destructive) {
-                                    chat.deleteSession(s.id)
-                                }
+                                Button(s.title, role: .destructive) { chat.deleteSession(s.id) }
                             }
                         }
                     }
                 } label: {
-                    Label("History", systemImage: "clock.arrow.circlepath")
+                    Image(systemName: "clock.arrow.circlepath")
+                        .font(.system(size: 12, weight: .medium))
                 }
                 .menuStyle(.borderlessButton)
-                .fixedSize()
+                .menuIndicator(.hidden)
+                .frame(width: 22)
+                .help("Past chats")
                 .onTapGesture { chat.refreshSessions() }
 
-                Button(action: chat.newSession) {
-                    Image(systemName: "square.and.pencil")
+                IconButton(symbol: "square.and.pencil", help: "New chat") {
+                    chat.newSession()
                 }
-                .buttonStyle(.plain)
-                .help("New chat")
-
-                Button { chat.closeTab(chat.currentSessionID) } label: {
-                    Image(systemName: "xmark.circle")
+                IconButton(symbol: "xmark", help: "Close this chat (kept in History)") {
+                    chat.closeTab(chat.currentSessionID)
                 }
-                .buttonStyle(.plain)
-                .help("Close this chat (it stays in History)")
             }
-            .font(.callout)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 7)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 9)
 
             if chat.openTabs.count > 1 { tabStrip }
             Divider()
         }
+        .background(.ultraThinMaterial)
     }
 
     private var tabStrip: some View {
@@ -99,21 +98,22 @@ struct SessionBar: View {
                     let active = id == chat.currentSessionID
                     HStack(spacing: 5) {
                         Text(chat.title(of: id))
-                            .lineLimit(1).frame(maxWidth: 130, alignment: .leading)
+                            .lineLimit(1).frame(maxWidth: 120, alignment: .leading)
                         Button { chat.closeTab(id) } label: {
-                            Image(systemName: "xmark").font(.system(size: 8, weight: .bold))
+                            Image(systemName: "xmark").font(.system(size: 7, weight: .bold))
                         }
                         .buttonStyle(.plain).foregroundStyle(.secondary)
                     }
-                    .font(.caption)
-                    .padding(.horizontal, 8).padding(.vertical, 4)
-                    .background(active ? Color.accentColor.opacity(0.18) : Color.gray.opacity(0.10))
-                    .clipShape(RoundedRectangle(cornerRadius: 6))
-                    .contentShape(Rectangle())
+                    .font(.system(size: 11, weight: active ? .semibold : .regular))
+                    .padding(.horizontal, 9).padding(.vertical, 4)
+                    .background(
+                        Capsule().fill(active ? Color.accentColor.opacity(0.16)
+                                              : Color.primary.opacity(0.05)))
+                    .contentShape(Capsule())
                     .onTapGesture { if !active { chat.openSession(id) } }
                 }
             }
-            .padding(.horizontal, 12).padding(.bottom, 6)
+            .padding(.horizontal, 16).padding(.bottom, 8)
         }
     }
 }

@@ -22,8 +22,64 @@ from typing import Any
 
 SHORTCUTS_BIN = "/usr/bin/shortcuts"
 
+def _bool(v: Any) -> bool:
+    return str(v).strip().lower() in {"1", "true", "yes", "on", "enable", "enabled"}
+
+
+# Bundle ids for apps people actually name out loud. Anything else falls back to
+# a plain name, which Shortcuts resolves when the shortcut is added.
+_BUNDLES = {
+    "safari": "com.apple.Safari", "music": "com.apple.Music",
+    "mail": "com.apple.mail", "messages": "com.apple.MobileSMS",
+    "notes": "com.apple.Notes", "calendar": "com.apple.iCal",
+    "reminders": "com.apple.reminders", "photos": "com.apple.Photos",
+    "spotify": "com.spotify.client", "finder": "com.apple.finder",
+    "terminal": "com.apple.Terminal", "maps": "com.apple.Maps",
+    "system settings": "com.apple.systempreferences",
+}
+
+
+def _app(v: Any) -> dict:
+    name = str(v).strip()
+    bundle = _BUNDLES.get(name.lower(), f"com.apple.{name.replace(' ', '')}")
+    return {"WFSelectedApp": {"BundleIdentifier": bundle, "Name": name}}
+
+
 # step type -> (action identifier, builder taking the step's value)
+#
+# Deliberately curated. Everything here does something real; the earlier set was
+# all notifications and waits, which built a valid shortcut that accomplished
+# nothing. Identifiers are Shortcuts' own and undocumented, so this list only
+# grows with ones whose parameter shape is known.
 VOCABULARY: dict[str, tuple[str, Any]] = {
+    # doing things
+    "open_app": ("is.workflow.actions.openapp", _app),
+    "quit_app": ("is.workflow.actions.quitapp", _app),
+    "run_shortcut": ("is.workflow.actions.runworkflow",
+                     lambda v: {"WFWorkflowName": str(v)}),
+    "open_url": ("is.workflow.actions.openurl",
+                 lambda v: {"WFInput": str(v)}),
+    # media
+    "music": ("is.workflow.actions.pausemusic",
+              lambda v: {"WFPlayPauseBehavior":
+                         {"play": "Play", "pause": "Pause"}.get(
+                             str(v).strip().lower(), "Play/Pause")}),
+    "next_track": ("is.workflow.actions.skipforward", lambda v: {}),
+    "previous_track": ("is.workflow.actions.skipback", lambda v: {}),
+    # system state
+    "set_focus": ("is.workflow.actions.dnd.set",
+                  lambda v: {"Enabled": _bool(v)}),
+    "set_wifi": ("is.workflow.actions.wifi.set",
+                 lambda v: {"OnValue": _bool(v)}),
+    "set_bluetooth": ("is.workflow.actions.bluetooth.set",
+                      lambda v: {"OnValue": _bool(v)}),
+    "set_low_power": ("is.workflow.actions.lowpowermode.set",
+                      lambda v: {"On": _bool(v)}),
+    "set_volume": ("is.workflow.actions.setvolume",
+                   lambda v: {"WFVolume": max(0.0, min(1.0, float(v)))}),
+    "set_brightness": ("is.workflow.actions.setbrightness",
+                       lambda v: {"WFBrightness": max(0.0, min(1.0, float(v)))}),
+    # output / control flow
     "notify": ("is.workflow.actions.notification",
                lambda v: {"WFNotificationActionBody": str(v),
                           "WFNotificationActionSound": True}),
@@ -31,14 +87,8 @@ VOCABULARY: dict[str, tuple[str, Any]] = {
             lambda v: {"WFText": str(v)}),
     "show": ("is.workflow.actions.showresult",
              lambda v: {"Text": str(v)}),
-    "open_url": ("is.workflow.actions.openurl",
-                 lambda v: {"WFInput": str(v)}),
     "wait": ("is.workflow.actions.delay",
              lambda v: {"WFDelayTime": float(v)}),
-    "set_volume": ("is.workflow.actions.setvolume",
-                   lambda v: {"WFVolume": max(0.0, min(1.0, float(v)))}),
-    "set_brightness": ("is.workflow.actions.setbrightness",
-                       lambda v: {"WFBrightness": max(0.0, min(1.0, float(v)))}),
     "comment": ("is.workflow.actions.comment",
                 lambda v: {"WFCommentActionText": str(v)}),
 }
