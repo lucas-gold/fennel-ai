@@ -299,3 +299,71 @@ And one that was worse: **concurrent MLX use from two threads crashes natively**
 no Python traceback, the process simply exits. Re-priming when the briefing lands
 raced with a live generation. `LLM` now holds a re-entrant lock across
 `stream_reply`, `complete` and `prime`.
+
+---
+
+## D-GATE — Every retrieval path needs a floor, including the old one
+
+D-BRIEFING gated *news* retrieval on a measured cosine floor and left
+conversation recall on raw FTS5. That was inconsistent, and the inconsistency
+was expensive. FTS returns *something* for any query, so recall was injecting
+"how are you" and "what else is new" into unrelated turns:
+
+| turn | context block before | after |
+|---|---|---|
+| "tell me a joke" | 60 tok → 0.72 s TTFT | 14 tok → **0.34 s** |
+| "what's the weather like in Toronto" | 86 tok → 0.87 s | 14 tok → **0.34 s** |
+| "what's going on with Iran" | 201 tok → 1.42 s | 127 tok → **1.05 s** |
+
+Messages are embedded on write (~5 ms) and recalled through the same
+`gated_top_k` as news, at a *higher* floor (0.62 vs 0.58) because most turns
+genuinely have no relevant past. The lesson generalises: **a retrieval path
+without a relevance floor is a latency leak and a correctness leak at once** —
+it pays prefill on every turn to feed the model noise.
+
+---
+
+## D-DUPLEX — Echo cancellation is not enough on its own
+
+The assistant was interrupting itself through the speakers. Voice processing
+cancels most of the feedback, but "most" fails badly when the penalty is the
+assistant cutting itself off. Two fixes:
+
+- While its own audio is audible, barge-in needs a much higher probability
+  (0.85 vs 0.5) *sustained* over ~200 ms. Leaked echo is intermittent and
+  doesn't clear that bar; a real interruption does, in well under a second.
+- The guard now covers the whole time audio is *playing*, not just while the
+  backend is generating. The app buffers whole clauses, so playback outlives
+  generation by seconds — `_assistant_active` alone left the tail unprotected,
+  which is exactly when self-interruption was happening.
+
+`[audio]` now logs whether voice processing actually engaged, because a silent
+AEC failure otherwise looks identical to a tuning problem.
+
+---
+
+## D-SEARCH — Wikipedia, and the honesty about what that is
+
+Two corrections to what I said when deferring this.
+
+**Qwen has no built-in internet access.** Tool calling is a *format* — the model
+emits a request and something has to implement it. There is no hidden capability
+to switch on.
+
+**"No free search API" was too pessimistic.** There is no free *general web*
+search, but Wikipedia's API is free, keyless, quota-free, and covers the large
+class of questions a 4-bit 4B model gets wrong or is out of date on. One request
+with `generator=search` + `prop=extracts` returns ranked hits and their intro
+text together, in 0.2–0.6 s — fast enough that the "let me look that up" padding
+is politeness rather than necessity. Content is CC BY-SA, so the source and link
+travel with the answer.
+
+It is not general web search: no local businesses, no breaking news (that is what
+the daily briefing is for). Its own setting, separate from daily updates, because
+it sends the user's actual question to a third party.
+
+**A read tool must never skip the follow-up round.** D-TOOLS skips the second
+generation when the model already spoke, which is right when prose *is* the
+confirmation. For a tool whose result is the answer it is catastrophic: the first
+search turn said "Let me look that up." and then ended. `ANSWERING_TOOLS` marks
+the tools whose results must be read back.

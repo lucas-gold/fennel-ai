@@ -96,7 +96,11 @@ final class AudioEngine {
             }
             player.play()
             mode = want
-            print("[audio] mode=\(want) mic=\(mic ? "OPEN" : "closed")")
+            // Report AEC state explicitly: if voice processing silently fails to
+            // engage, the assistant hears itself through the speakers and there
+            // is nothing else in the logs that would say so.
+            let aec = mic ? (engine.inputNode.isVoiceProcessingEnabled ? "AEC on" : "AEC OFF") : "no mic"
+            print("[audio] mode=\(want) mic=\(mic ? "OPEN" : "closed") \(aec)")
         } catch {
             print("audio engine start failed:", error)
             mode = .off

@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import json
 import threading
+import time
 from typing import Awaitable, Callable, Optional
 from uuid import uuid4
 
@@ -24,11 +25,12 @@ import numpy as np
 
 import config
 import protocol as P
+from voice import feeds
 from voice.llm import LLM
 from voice.memory import Memory
 from voice.store import Store
 from voice.stt import WhisperSTT
-from voice.tools import ToolStream, normalize, system_prompt
+from voice.tools import ANSWERING_TOOLS, ToolStream, normalize, system_prompt
 from voice.tts import ClauseSplitter, KokoroTTS
 from voice.vad import Endpointer
 
@@ -65,6 +67,10 @@ class Session:
         self._turn_task: Optional[asyncio.Task] = None
         self._stop = threading.Event()
         self._assistant_active = False
+        # Wall-clock instant the audio we've sent will finish playing. The app
+        # buffers whole clauses, so playback outlives generation by seconds —
+        # guarding only while `_assistant_active` left the tail unprotected.
+        self._audio_until = 0.0
         self._rx = 0  # mic frames received (debug)
 
         # Tool calls awaiting the app's real-world result, keyed by call id.
@@ -139,7 +145,8 @@ class Session:
     async def feed_frame(self, frame_f32: np.ndarray) -> None:
         """One 16 kHz mic frame. Detects barge-in and turn endpoints."""
         was_speaking = self._endpointer.speaking
-        endpoint = self._endpointer.process(frame_f32)
+        guarded = self._assistant_active or time.monotonic() < self._audio_until
+        endpoint = self._endpointer.process(frame_f32, guarded=guarded)
         onset = self._endpointer.speaking and not was_speaking
 
         self._rx += 1
@@ -150,7 +157,7 @@ class Session:
         if onset:
             print("[vad] speech onset", flush=True)
 
-        if onset and self._assistant_active:
+        if onset and guarded:      # includes the tail still coming out of the speakers
             await self._barge_in()
         if endpoint is not None:
             print(f"[vad] endpoint: {len(endpoint.audio)/16000:.2f}s", flush=True)
@@ -174,6 +181,7 @@ class Session:
         self._epoch += 1        # invalidate every in-flight stage (D3)
         self._stop.set()        # unblock the LLM worker thread
         self._assistant_active = False
+        self._audio_until = 0.0  # the app drops queued audio on barge-in too
         await self._send_control(P.encode("state", value="idle"))
         # The interrupted turn commits its partial reply in _run_turn's finally.
 
@@ -205,6 +213,22 @@ class Session:
 
         if name == "set_fact":
             self._store.set_fact(card["key"], card["value"])
+
+        if name == "search_web":
+            # Its own setting, not the daily-updates one: a daily fetch of fixed
+            # feeds reveals nothing about the user, whereas this sends their
+            # actual question to a third party (D-BRIEFING).
+            if self._store.setting("web_search", "0") != "1":
+                return {"name": name, "ok": False,
+                        "error": "web search is turned off in settings; answer "
+                                 "from what you know and say you couldn't look it up"}
+            hits = await asyncio.to_thread(feeds.wiki_search, card["query"])
+            if not hits:
+                return {"name": name, "ok": False,
+                        "error": f"nothing found on Wikipedia for {card['query']!r}"}
+            card = {**card, "results": [{"title": h.title, "link": h.link} for h in hits]}
+            result = {"ok": True, "source": "Wikipedia",
+                      "results": [{"title": h.title, "extract": h.summary} for h in hits]}
 
         call_id = uuid4().hex[:8]
         fut: asyncio.Future = asyncio.get_running_loop().create_future()
@@ -246,7 +270,7 @@ class Session:
         # The store keeps what the user actually said; the prompt gets the
         # volatile preamble (clock + recall) glued on front — last position in
         # the prompt, so the cached prefix behind it survives (D4).
-        self._store.add_message(self._session_id, "user", text)
+        self._memory.remember(self._session_id, "user", text)
         self._messages.append({
             "role": "user",
             "content": self._memory.preamble(self._session_id, text) + text,
@@ -266,6 +290,8 @@ class Session:
             if pcm.size == 0 or not self._live(epoch):
                 return
             await self._send_audio(P.pack_audio(turn, seq, pcm))
+            now = time.monotonic()
+            self._audio_until = max(now, self._audio_until) + len(pcm) / 24000.0
             seq += 1
             spoken += clause + " "
 
@@ -345,12 +371,16 @@ class Session:
                 # annoying failure mode in a voice UI — and skipping the extra
                 # round also removes a whole generation from the critical path.
                 # A failed tool still gets a round, so the model can own it.
-                if len(said.strip()) >= 15 and all(r.get("ok") for r in results):
+                # Never skip for a tool whose result IS the answer, or the user
+                # hears "let me look that up" and then nothing.
+                answering = any(c["name"] in ANSWERING_TOOLS for c in calls)
+                if (not answering and len(said.strip()) >= 15
+                        and all(r.get("ok") for r in results)):
                     break
         finally:
             self._assistant_active = False
             if self._live(epoch):
-                self._store.add_message(self._session_id, "assistant", visible.strip())
+                self._memory.remember(self._session_id, "assistant", visible.strip())
                 await self._send_control(P.encode("turn_end", turn=turn))
                 if do_speak:
                     await self._send_control(P.encode("state", value="idle"))
@@ -359,7 +389,7 @@ class Session:
                 # barge-in: history records only what was actually spoken (D3)
                 partial = (spoken.strip() + " —").strip()
                 self._messages.append({"role": "assistant", "content": partial})
-                self._store.add_message(self._session_id, "assistant", partial)
+                self._memory.remember(self._session_id, "assistant", partial)
 
     async def _after_turn(self) -> None:
         """Housekeeping the user must never wait for."""

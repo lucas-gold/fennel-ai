@@ -12,6 +12,7 @@ struct HomeCard: Identifiable {
         case timer = "set_timer"
         case agenda = "agenda"
         case link = "open_link"
+        case search = "search_web"
 
         var icon: String {
             switch self {
@@ -23,6 +24,7 @@ struct HomeCard: Identifiable {
             case .timer: return "timer"
             case .agenda: return "list.bullet.rectangle"
             case .link: return "safari"
+            case .search: return "magnifyingglass"
             }
         }
 
@@ -36,6 +38,7 @@ struct HomeCard: Identifiable {
             case .timer: return .red
             case .agenda: return .indigo
             case .link: return .cyan
+            case .search: return .mint
             }
         }
 
@@ -103,6 +106,12 @@ struct HomeCard: Identifiable {
         case .link:
             title = args["label"] as? String ?? "Link"
             subtitle = URL(string: args["url"] as? String ?? "")?.host
+            status = .done
+        case .search:
+            title = args["query"] as? String ?? "Search"
+            subtitle = "Wikipedia"
+            items = (args["results"] as? [[String: Any]] ?? [])
+                .compactMap { $0["title"] as? String }
             status = .done
         }
     }

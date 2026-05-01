@@ -141,6 +141,21 @@ class Embedder:
         self.encode(["warm"])
 
 
+def gated_top_k(query_vec: np.ndarray, ids: list[int], mat: Optional[np.ndarray],
+                floor: float, k: int) -> list[int]:
+    """Top-k row ids whose cosine clears `floor` — empty when nothing does.
+
+    Returning nothing is the common, desirable case: injecting a weak "match"
+    costs prefill on every turn and actively misleads the model. Shared by
+    conversation recall and news retrieval so both gate identically.
+    """
+    if mat is None or not len(ids):
+        return []
+    sims = mat @ query_vec                      # both sides L2-normalised
+    order = sims.argsort()[::-1][:k]
+    return [ids[i] for i in order if float(sims[i]) >= floor]
+
+
 _shared: Optional[Embedder] = None
 
 

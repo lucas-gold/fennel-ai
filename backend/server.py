@@ -63,12 +63,15 @@ async def _refresh_briefing(session: Session) -> None:
     lands, the model simply runs without a briefing.
     """
     global _system, _system_day
-    if not _briefing.is_stale():
+    if _briefing.is_stale():
+        await asyncio.to_thread(_briefing.build, embed.shared())
+    # Re-prime whenever the prefix we *want* differs from the one that's primed,
+    # not merely when the fetch was stale: toggling "daily updates" on mid-run
+    # leaves a perfectly fresh briefing sitting outside the prefix otherwise.
+    want = _build_system()
+    if want == _system:
         return
-    text = await asyncio.to_thread(_briefing.build, embed.shared())
-    if not text:
-        return
-    _system, _system_day = _build_system(), date.today()
+    _system, _system_day = want, date.today()
     # Hand the session the new prefix BEFORE priming. A turn arriving during the
     # prime blocks on the LLM lock either way, but this way it wakes up using the
     # new prefix on a warm cache rather than the stale one.
@@ -105,10 +108,13 @@ async def handler(ws) -> None:
                 elif msg["type"] == "settings":
                     _briefing.configure(enabled=msg.get("daily_updates"),
                                         place=msg.get("location"))
+                    if (w := msg.get("web_search")) is not None:
+                        _store.set_setting("web_search", "1" if w else "0")
                     asyncio.create_task(_refresh_briefing(session))
-                    await ws.send(P.encode("settings",
-                                           daily_updates=_briefing.enabled,
-                                           location=_briefing.place))
+                    await ws.send(P.encode(
+                        "settings", daily_updates=_briefing.enabled,
+                        location=_briefing.place,
+                        web_search=_store.setting("web_search", "0") == "1"))
                 elif msg["type"] == "session_list":
                     await session.send_sessions()
                 elif msg["type"] == "session_open":
@@ -129,7 +135,8 @@ async def main() -> None:
     _briefing = Briefing(_store)
     # Embeddings power both news retrieval and conversational recall; loading is
     # lazy and optional, so a failure degrades to keyword search (embed.shared).
-    _memory = Memory(_store, Retriever(_store, embed.shared()))
+    _emb = embed.shared()
+    _memory = Memory(_store, Retriever(_store, _emb), _emb)
     print("loading models "
           f"({config.LLM_MODEL.split('/')[-1]}, "
           f"{config.STT_MODEL.split('/')[-1]}, "

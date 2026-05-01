@@ -19,6 +19,7 @@ from datetime import datetime
 from typing import Optional
 
 import config
+from voice import embed
 from voice.store import Store
 
 Message = dict[str, str]
@@ -43,9 +44,40 @@ def _ago(ts: float, now: Optional[datetime] = None) -> str:
 
 
 class Memory:
-    def __init__(self, store: Store, retriever=None) -> None:
+    def __init__(self, store: Store, retriever=None, embedder=None) -> None:
         self._store = store
         self._retriever = retriever
+        self._embedder = embedder
+
+    def remember(self, session_id: int, role: str, content: str) -> None:
+        """Persist a turn, embedding it so recall can be gated on meaning.
+        Embedding costs ~5 ms; matching without it costs a prompt full of noise."""
+        vec = None
+        if self._embedder is not None and len(content.split()) >= 3:
+            try:
+                vec = self._embedder.encode_one(content)
+            except Exception as exc:
+                print(f"[memory] embed failed, storing unindexed: {exc}", flush=True)
+        self._store.add_message(session_id, role, content, vec=vec)
+
+    def _recall(self, session_id: int, query: str, k: int = 2) -> list[dict]:
+        """Past conversations worth quoting — usually none.
+
+        This used to be raw FTS5, which returns *something* for any query at
+        all: "tell me a joke" was pulling in "how are you" and "what else is
+        new", costing 60+ tokens of prefill every turn to actively mislead the
+        model. Gated on cosine now, exactly like news retrieval (D-BRIEFING).
+        """
+        if self._embedder is None or len(query.split()) < 3:
+            return []
+        ids, mat = self._store.message_vectors(exclude_session=session_id)
+        try:
+            hits = embed.gated_top_k(self._embedder.encode_one(query), ids, mat,
+                                     config.RECALL_MIN_SCORE, k)
+        except Exception as exc:
+            print(f"[memory] recall failed: {exc}", flush=True)
+            return []
+        return self._store.messages_by_id(hits)
 
     # ── the context message (facts + summary) ──────────────────────────────
 
@@ -72,8 +104,7 @@ class Memory:
         the system prompt so the primed prefix stays byte-identical (D-PREFIX)."""
         now = now or datetime.now()
         parts = [f"time: {now.strftime('%-I:%M %p')}"]
-        hits = self._store.search(user_text, exclude_session=session_id, limit=3)
-        for h in hits:
+        for h in self._recall(session_id, user_text):
             who = "they said" if h["role"] == "user" else "you said"
             text = " ".join(h["content"].split())[:160]
             parts.append(f"recall ({_ago(h['ts'], now)}, {who}): {text}")
@@ -82,7 +113,7 @@ class Memory:
         # which is what keeps per-turn latency flat as the archive grows.
         if self._retriever is not None:
             budget = config.RETRIEVAL_MAX_CHARS
-            for c in self._retriever.search(user_text, k=3):
+            for c in self._retriever.search(user_text, k=config.RETRIEVAL_TOP_K):
                 line = f"news ({c['day']}, {c['source']}): {c['title']}"
                 if c.get("body"):
                     line += f" — {c['body']}"
