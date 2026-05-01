@@ -276,6 +276,14 @@ final class ChatModel: ObservableObject {
         case .shortcut:
             try await MacActions.runShortcut(named: card.args["name"] as? String ?? "")
             return (nil, nil, [])
+        case .newShortcut:
+            // Opening the signed file makes Shortcuts show its Add sheet with
+            // every action listed — the user approves before it exists.
+            guard let path = card.args["path"] as? String else {
+                throw MacActions.Failure(message: "the shortcut file is missing")
+            }
+            NSWorkspace.shared.open(URL(fileURLWithPath: path))
+            return (nil, nil, [])
         case .panel, .fact, .song, .timer, .link, .search:
             return (nil, nil, [])       // the card itself is the whole effect
         }

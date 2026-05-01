@@ -25,7 +25,7 @@ import numpy as np
 
 import config
 import protocol as P
-from voice import feeds
+from voice import feeds, shortcuts
 from voice.llm import LLM
 from voice.memory import Memory
 from voice.store import Store
@@ -217,6 +217,21 @@ class Session:
 
         if name == "set_fact":
             self._store.set_fact(card["key"], card["value"])
+
+        if name == "create_shortcut":
+            try:
+                path = await asyncio.to_thread(
+                    shortcuts.write_signed, card["name"], card["steps"])
+            except shortcuts.ShortcutError as exc:
+                return {"name": name, "ok": False, "error": str(exc)}
+            except Exception as exc:
+                return {"name": name, "ok": False,
+                        "error": f"couldn't build the shortcut: {exc}"}
+            # The app opens it; macOS shows an Add sheet listing every action, so
+            # nothing reaches their library without them approving it.
+            card = {**card, "path": path}
+            result = {"ok": True, "name": card["name"],
+                      "note": "waiting for them to press Add"}
 
         if name == "search_web":
             # Its own setting, not the daily-updates one: a daily fetch of fixed

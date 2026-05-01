@@ -4,9 +4,6 @@ A local speech-to-speech companion for Apple Silicon Macs. Text or voice,
 running entirely on-device. No API key, no account, no network after the
 first model download. Ships as a paid, direct-download Mac app.
 
-Video is deliberately left out of v1; the seam is cut on the Python side
-(`backend/voice/vision.py`) for later.
-
 ## Architecture — two local processes
 
 Unlike the original design (browser UI + Python), the UI is a **native
@@ -38,25 +35,12 @@ Audio in: Swift captures via `AVAudioEngine`, resamples to 16 kHz, sends
 that the browser's `getUserMedia` used to give for free.
 Audio out: `>II` header (turn, seq) + int16 PCM at 24 kHz.
 
-## The four non-negotiables (inherited, unchanged)
-
-1. **Latency is the product.** Under 300 ms time-to-first-audio. Never wait
-   for a stage to *complete* when you could consume its stream.
-2. **Barge-in cancels everything** within ~100 ms; history records only what
-   was actually spoken.
-3. **Fully offline** after first-launch download. Nothing in the hot path
-   touches a network.
-4. **Apache 2.0 / MIT only.** Paid product — see `docs/DECISIONS.md`.
-
 ## Platform & distribution
 
-- **Apple Silicon macOS only.** MLX and SwiftUI are both Apple-only; that is
-  a deliberate, accepted constraint (see D-PLATFORM).
-- **Direct download only** (Developer ID + notarization, Sparkle updates,
-  Paddle/Stripe). The Mac App Store is **not** a target — dropping it removes
-  the App Sandbox constraint and lets the app keep a Python backend.
+- **Apple Silicon macOS only.** MLX and SwiftUI are both Apple-only.
+- **Direct download only** 
 
-## Layout (planned)
+## Layout
 
 ```
 README.md                  you are here
@@ -73,7 +57,7 @@ app/                       Swift package / Xcode project (SwiftUI)
 training/                  SEPARATE: Phase-4 LoRA fine-tuning + evals (Python)
 ```
 
-## Running it (Stage 1)
+## Running it
 
 ```bash
 ./scripts/setup-venv.sh                       # one-time: uv + Python 3.12 + deps
@@ -83,10 +67,3 @@ Then, in another terminal:
 ```bash
 cd app && swift run                           # SwiftUI app; type to chat locally
 ```
-
-## Status
-
-Fresh build from the reference design docs in `~/Downloads/files/`. **Stages 0–1
-done**: two-process transport + native LLM text chat with prefix-cache reuse
-(D4), verified end to end. Build order in `docs/ROADMAP.md`; Stage 2 (voice:
-VAD/STT/TTS + AEC) is next.
