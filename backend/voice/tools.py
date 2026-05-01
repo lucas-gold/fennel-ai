@@ -118,6 +118,27 @@ TOOLS: list[dict] = [
     {
         "type": "function",
         "function": {
+            "name": "search_web",
+            "description": (
+                "Look a topic up on Wikipedia when you don't know it, aren't "
+                "sure, or your knowledge may be out of date — people, places, "
+                "science, history, definitions. It cannot find local businesses "
+                "or breaking news. Call it and wait; you are given the article "
+                "text, and then you answer from it and say it came from "
+                "Wikipedia. Do not answer from memory once you've decided to look."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Search terms, not a full sentence."},
+                },
+                "required": ["query"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "open_link",
             "description": (
                 "Put a link on screen as a button the user can click — a website, "
@@ -207,6 +228,12 @@ TOOLS: list[dict] = [
 ]
 
 TOOL_NAMES = {t["function"]["name"] for t in TOOLS}
+
+# Tools whose *result* is the answer, not a confirmation. The turn must always
+# run another LLM round after these, even if the model already said something —
+# skipping it (which is right for side-effecting tools) leaves the user with
+# "let me look that up" and then silence.
+ANSWERING_TOOLS = {"search_web", "agenda"}
 
 
 # ── streaming split ────────────────────────────────────────────────────────
@@ -368,6 +395,14 @@ def normalize(name: str, args: dict) -> tuple[dict, dict]:
         pretty = (f"{int(minutes)} min" if minutes == int(minutes)
                   else f"{minutes:g} min")
         return card, {"ok": True, "label": label, "length": pretty}
+
+    if name == "search_web":
+        query = str(args.get("query", "")).strip()
+        if not query:
+            return {}, {"ok": False, "error": "a search query is required"}
+        # The fetch itself happens in Session._run_tool: it's the network, so it
+        # needs the online setting checked and a thread to run on.
+        return {"query": query}, {"ok": True, "query": query}
 
     if name == "open_link":
         url = str(args.get("url", "")).strip()

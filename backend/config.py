@@ -86,10 +86,15 @@ ARCHIVE_KEEP_DAYS = 120
 # Cosine floor, and the gate that decides whether to retrieve at all. Measured
 # separation on real feeds: on-topic queries score 0.55-0.66, off-topic 0.42-0.46.
 # Below the floor we inject NOTHING — noise costs prefill and misleads the model.
-RETRIEVAL_MIN_SCORE = 0.50
+RETRIEVAL_MIN_SCORE = 0.58
+RETRIEVAL_TOP_K = 2
+# Conversation recall is held to a higher bar than news: most turns genuinely
+# have no relevant past, and a weak "match" was costing 60+ tokens of prefill
+# per turn to inject things like "how are you".
+RECALL_MIN_SCORE = 0.62
 # Hard cap on retrieved context per turn. This is the number that keeps latency
 # constant as the archive grows — never raise it to "fit more in".
-RETRIEVAL_MAX_CHARS = 700
+RETRIEVAL_MAX_CHARS = 450
 
 # ── VAD / endpointing (Stage 2) ────────────────────────────────────────────
 # Latency hides in turn-taking, not the models — tune END_SILENCE_MS first (D2).
@@ -99,4 +104,12 @@ FRAME_SAMPLES = 512      # 32 ms @16 kHz — the Silero v5 window (== client fra
 VAD_THRESHOLD = 0.5
 END_SILENCE_MS = 350     # silence before "you're done"; lower = snappier, too low cuts you off
 MIN_SPEECH_MS = 200      # ignore blips shorter than this
+# Barge-in while the assistant is talking is held to a much higher bar. Voice
+# processing cancels most of the speaker feed, but the residue was enough to
+# make it interrupt itself; requiring a high probability *sustained* over ~200 ms
+# rejects leaked echo while a real interruption still lands in well under a
+# second. Applies for the whole time audio is actually playing, not just while
+# the backend is still generating it.
+BARGE_IN_THRESHOLD = 0.85
+BARGE_IN_MIN_MS = 200
 PREROLL_FRAMES = 5       # ~160 ms kept before onset so the first word isn't clipped

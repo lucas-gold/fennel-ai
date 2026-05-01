@@ -116,6 +116,11 @@ class Store:
         self._lock = threading.Lock()
         with self._lock:
             self._db.executescript(_SCHEMA)
+            # Migration: messages predate embedding-gated recall (they were
+            # matched by FTS alone, which injected noise into every prompt).
+            cols = {r["name"] for r in self._db.execute("PRAGMA table_info(messages)")}
+            if "vec" not in cols:
+                self._db.execute("ALTER TABLE messages ADD COLUMN vec BLOB")
             self._db.commit()
 
     # ── sessions ───────────────────────────────────────────────────────────
@@ -158,12 +163,14 @@ class Store:
 
     # ── messages ───────────────────────────────────────────────────────────
 
-    def add_message(self, session_id: int, role: str, content: str) -> int:
+    def add_message(self, session_id: int, role: str, content: str,
+                    vec=None) -> int:
         now = time.time()
+        blob = None if vec is None else vec.astype("float32").tobytes()
         with self._lock:
             cur = self._db.execute(
-                "INSERT INTO messages (session_id, role, content, ts) VALUES (?,?,?,?)",
-                (session_id, role, content, now))
+                "INSERT INTO messages (session_id, role, content, ts, vec) VALUES (?,?,?,?,?)",
+                (session_id, role, content, now, blob))
             # First user line names the chat, so the session list is readable
             # without generating a title (which would cost a whole extra turn).
             if role == "user":
@@ -284,6 +291,34 @@ class Store:
         with self._lock:
             rows = self._db.execute(
                 f"SELECT id, day, source, title, body, link FROM chunks WHERE id IN ({qs})",
+                ids).fetchall()
+        by_id = {int(r["id"]): dict(r) for r in rows}
+        return [by_id[i] for i in ids if i in by_id]
+
+    def message_vectors(self, exclude_session: Optional[int] = None):
+        """Embedded messages from *other* conversations — this session's recent
+        turns are already in the prompt verbatim, so recalling them is waste."""
+        import numpy as np
+        sql = "SELECT id, vec FROM messages WHERE vec IS NOT NULL"
+        params: list[Any] = []
+        if exclude_session is not None:
+            sql += " AND session_id != ?"
+            params.append(exclude_session)
+        with self._lock:
+            rows = self._db.execute(sql + " ORDER BY id", params).fetchall()
+        if not rows:
+            return [], None
+        ids = [int(r["id"]) for r in rows]
+        mat = np.frombuffer(b"".join(r["vec"] for r in rows), dtype="float32")
+        return ids, mat.reshape(len(ids), -1)
+
+    def messages_by_id(self, ids: list[int]) -> list[dict]:
+        if not ids:
+            return []
+        qs = ",".join("?" * len(ids))
+        with self._lock:
+            rows = self._db.execute(
+                f"SELECT id, role, content, ts FROM messages WHERE id IN ({qs})",
                 ids).fetchall()
         by_id = {int(r["id"]): dict(r) for r in rows}
         return [by_id[i] for i in ids if i in by_id]

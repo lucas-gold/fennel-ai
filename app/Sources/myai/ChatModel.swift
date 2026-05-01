@@ -40,6 +40,7 @@ final class ChatModel: ObservableObject {
     /// Opt-in networking. Off by default: the app is offline unless asked.
     @Published var dailyUpdates = false
     @Published var location = ""
+    @Published var webSearch = false
 
     private let client = WebSocketClient()
     private let audio = AudioEngine()
@@ -106,6 +107,7 @@ final class ChatModel: ObservableObject {
         case "settings":
             dailyUpdates = msg["daily_updates"] as? Bool ?? false
             location = msg["location"] as? String ?? ""
+            webSearch = msg["web_search"] as? Bool ?? false
         case "sessions":
             if let items = msg["items"] as? [[String: Any]] {
                 sessions = items.compactMap(ChatSession.init(json:))
@@ -159,7 +161,8 @@ final class ChatModel: ObservableObject {
     /// so the toggle always reflects reality rather than intent.
     func saveSettings() {
         client.send(Wire.encode("settings", ["daily_updates": dailyUpdates,
-                                             "location": location]))
+                                             "location": location,
+                                             "web_search": webSearch]))
     }
 
     func title(of id: Int) -> String {
@@ -267,7 +270,7 @@ final class ChatModel: ObservableObject {
         case .agenda:
             let a = try await EventKitBridge.agenda(range: card.args["range"] as? String ?? "today")
             return (nil, ["items": a.lines, "count": a.count], a.lines)
-        case .panel, .fact, .song, .timer, .link:
+        case .panel, .fact, .song, .timer, .link, .search:
             return (nil, nil, [])       // the card itself is the whole effect
         }
     }

@@ -66,25 +66,59 @@ private struct HomePanel: View {
 /// its own switch, and why the city is typed rather than read from CoreLocation.
 private struct SettingsMenu: View {
     @EnvironmentObject var chat: ChatModel
+    @State private var open = false
+
+    private var online: Bool { chat.dailyUpdates || chat.webSearch }
 
     var body: some View {
-        Menu {
-            Toggle("Daily updates", isOn: Binding(
-                get: { chat.dailyUpdates },
-                set: { chat.dailyUpdates = $0; chat.saveSettings() }))
-            Text(chat.dailyUpdates
-                 ? "Fetches weather and headlines once a day."
-                 : "Off — the app makes no network requests.")
-            Divider()
-            Text("Weather city")
-            TextField("e.g. Toronto", text: $chat.location)
-                .onSubmit { chat.saveSettings() }
-        } label: {
-            Image(systemName: chat.dailyUpdates ? "wifi" : "wifi.slash")
+        Button { open.toggle() } label: {
+            Image(systemName: online ? "wifi" : "wifi.slash")
+                .foregroundStyle(online ? Color.accentColor : Color.secondary)
         }
-        .menuStyle(.borderlessButton)
-        .fixedSize()
+        .buttonStyle(.plain)
         .help("Network settings")
+        // A popover, not a Menu: menu content on macOS is limited to buttons and
+        // labels, so the TextField this used to hold silently did nothing and
+        // the city could never actually be set.
+        .popover(isPresented: $open, arrowEdge: .bottom) {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Network").font(.headline)
+                Text("Off by default. Everything else in my_ai runs entirely on this Mac.")
+                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+
+                Divider()
+
+                Toggle("Daily updates", isOn: Binding(
+                    get: { chat.dailyUpdates },
+                    set: { chat.dailyUpdates = $0; chat.saveSettings() }))
+                Text("Fetches weather and headlines once a day from a fixed list of sources. Reveals nothing about you.")
+                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+
+                HStack {
+                    Text("City").frame(width: 34, alignment: .leading)
+                    TextField("e.g. Toronto", text: $chat.location)
+                        .textFieldStyle(.roundedBorder)
+                        .onSubmit { chat.saveSettings() }
+                    Button("Save") { chat.saveSettings() }
+                }
+                .disabled(!chat.dailyUpdates)
+                if chat.dailyUpdates && chat.location.isEmpty {
+                    Label("Set a city or you'll get headlines but no weather.",
+                          systemImage: "exclamationmark.circle")
+                        .font(.caption).foregroundStyle(.orange)
+                }
+
+                Divider()
+
+                Toggle("Look things up on Wikipedia", isOn: Binding(
+                    get: { chat.webSearch },
+                    set: { chat.webSearch = $0; chat.saveSettings() }))
+                Text("Lets it search when it doesn't know something. Unlike daily updates, this sends your question to Wikipedia.")
+                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(14)
+            .frame(width: 310)
+        }
     }
 }
 

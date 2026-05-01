@@ -111,6 +111,42 @@ def weather(lat: float, lon: float, label: str) -> Optional[str]:
         return None
 
 
+def wiki_search(query: str, limit: int = 2) -> list[Item]:
+    """Look something up on Wikipedia. Free, keyless, no account, no quota.
+
+    This is an encyclopedia lookup, not a general web search — it won't find
+    "best pizza near me" or this morning's news. But it does cover the large
+    class of questions a small local model gets wrong or is out of date on
+    (people, places, definitions, history), which is most of what "search the
+    internet" is actually asked for here.
+
+    One request: `generator=search` feeds the search hits straight into
+    `prop=extracts`, so we get ranked results *and* their intro text together.
+    Content is CC BY-SA, so the source and link travel with it.
+    """
+    q = urllib.parse.urlencode({
+        "action": "query", "format": "json", "prop": "extracts|info",
+        "inprop": "url", "exintro": 1, "explaintext": 1, "exchars": 700,
+        "generator": "search", "gsrsearch": query.strip(), "gsrlimit": limit,
+    })
+    try:
+        data = json.loads(_get(f"https://en.wikipedia.org/w/api.php?{q}"))
+    except Exception as exc:
+        print(f"[feeds] wiki search failed: {exc}", flush=True)
+        return []
+    pages = (data.get("query") or {}).get("pages") or {}
+    # `index` preserves the search ranking; dict order here does not.
+    ranked = sorted(pages.values(), key=lambda p: p.get("index", 99))
+    out: list[Item] = []
+    for p in ranked[:limit]:
+        extract = _text(p.get("extract"), 700)
+        if not extract:
+            continue
+        out.append(Item(source="Wikipedia", title=_text(p.get("title"), 120),
+                        summary=extract, link=p.get("fullurl", "")))
+    return out
+
+
 def headlines(feeds: Optional[list[tuple[str, str]]] = None,
               per_feed: int = 8) -> list[Item]:
     out: list[Item] = []

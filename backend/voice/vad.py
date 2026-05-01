@@ -72,20 +72,34 @@ class Endpointer:
         self._preroll: list[np.ndarray] = []
         self._silence_ms = 0.0
         self._speech_ms = 0.0
+        self._onset_ms = 0.0
 
-    def process(self, frame_f32: np.ndarray) -> Optional[Endpoint]:
-        speech = self._vad(frame_f32) >= config.VAD_THRESHOLD
+    def process(self, frame_f32: np.ndarray, guarded: bool = False) -> Optional[Endpoint]:
+        """`guarded` = the assistant's own voice is currently coming out of the
+        speakers. Echo cancellation removes most of it, but "most" is not enough
+        when the penalty is the assistant interrupting itself — so while it
+        talks, onset needs a higher probability *sustained* over several frames.
+        Real interruption still gets through; a leaked syllable doesn't."""
+        prob = self._vad(frame_f32)
+        threshold = config.BARGE_IN_THRESHOLD if guarded else config.VAD_THRESHOLD
+        needed_ms = config.BARGE_IN_MIN_MS if guarded else 0.0
+        speech = prob >= threshold
 
         if not self._speaking:
             self._preroll.append(frame_f32)
             if len(self._preroll) > self._preroll_max:
                 self._preroll.pop(0)
-            if speech:
+            if not speech:
+                self._onset_ms = 0.0        # must be *consecutive* to count
+                return None
+            self._onset_ms += self._frame_ms
+            if self._onset_ms >= needed_ms:
                 self._speaking = True
                 self._utter = self._preroll + [frame_f32]
                 self._preroll = []
                 self._silence_ms = 0.0
-                self._speech_ms = self._frame_ms
+                self._speech_ms = self._onset_ms
+                self._onset_ms = 0.0
             return None
 
         # speaking
