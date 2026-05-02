@@ -103,10 +103,12 @@ splitter jumped 18→90 chars, which starved playback about a second in — meas
 - Off by default; one switch in the app, with the weather city typed by hand
   rather than read from CoreLocation.
 
+- `search_web` — Wikipedia: free, keyless, 0.2–0.6 s (D-SEARCH).
+- Mac actions: `open_app`, `run_shortcut`, `create_shortcut` (D-MAC, D-AUTHOR).
+
 ### Still open here
-- **Live web search.** Deferred deliberately: no free search API exists, so this
-  is a product decision (user-supplied key vs proxying) not just code. The tool
-  seam is ready — it wants speculative speech ("let me check…") while fetching.
+- **General web search** (beyond Wikipedia) needs an API key from someone —
+  Ollama's included, see D-NOKEY. Wants a bring-your-own-key field, not code.
 
 ## Stage 5 — Ship
 

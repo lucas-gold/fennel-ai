@@ -177,6 +177,41 @@ TOOLS: list[dict] = [
     {
         "type": "function",
         "function": {
+            "name": "create_shortcut",
+            "description": (
+                "Build a new macOS Shortcut for the user. They review it and "
+                "press Add before it exists, so propose one when they describe "
+                "a routine they'd like to repeat. Each step is {type, value}, "
+                "and type must be one of: say (speak text aloud), notify (send "
+                "a notification), show (display text), open_url, wait (seconds), "
+                "set_volume (0-1), set_brightness (0-1), comment. Those are the "
+                "ONLY step types that exist — if what they want needs anything "
+                "else, say so instead of inventing a step."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "description": "Short name for the shortcut."},
+                    "steps": {
+                        "type": "array",
+                        "description": "Ordered steps.",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "type": {"type": "string"},
+                                "value": {"type": "string"},
+                            },
+                            "required": ["type", "value"],
+                        },
+                    },
+                },
+                "required": ["name", "steps"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "open_link",
             "description": (
                 "Put a link on screen as a button the user can click — a website, "
@@ -271,7 +306,7 @@ TOOL_NAMES = {t["function"]["name"] for t in TOOLS}
 # run another LLM round after these, even if the model already said something —
 # skipping it (which is right for side-effecting tools) leaves the user with
 # "let me look that up" and then silence.
-ANSWERING_TOOLS = {"search_web", "agenda", "run_shortcut"}
+ANSWERING_TOOLS = {"search_web", "agenda", "run_shortcut", "create_shortcut"}
 
 
 # ── streaming split ────────────────────────────────────────────────────────
@@ -441,6 +476,13 @@ def normalize(name: str, args: dict) -> tuple[dict, dict]:
         # The fetch itself happens in Session._run_tool: it's the network, so it
         # needs the online setting checked and a thread to run on.
         return {"query": query}, {"ok": True, "query": query}
+
+    if name == "create_shortcut":
+        label = str(args.get("name", "")).strip() or "Shortcut"
+        steps = args.get("steps")
+        if not isinstance(steps, list) or not steps:
+            return {}, {"ok": False, "error": "the shortcut needs at least one step"}
+        return {"name": label, "steps": steps}, {"ok": True, "name": label}
 
     if name in ("open_app", "run_shortcut"):
         label = str(args.get("name", "")).strip()

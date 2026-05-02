@@ -410,3 +410,55 @@ install directories, since `NSWorkspace` can't find everything by name alone.
 Deliberately NOT auto-sending messages or email. Those are irreversible and
 outward-facing; the right pattern is the one `open_link` already uses — put it
 on screen and let the user press the button.
+
+---
+
+## D-AUTHOR — Creating Shortcuts: a fixed vocabulary, and the user presses Add
+
+There is no `shortcuts create`, but `shortcuts sign` takes an *input* file — so a
+shortcut can be authored as a plist, signed with Apple's own tool, and handed
+over. Opening the signed file makes Shortcuts show its Add sheet with every
+action listed, so nothing reaches the user's library without their approval.
+That confirmation is what makes this safe to expose at all; the app never writes
+to their library directly.
+
+The real constraint is not signing, it is the action vocabulary. Shortcuts has
+hundreds of actions with undocumented identifiers and parameter shapes, and a
+4-bit 4B model asked to invent them produces plausible nonsense that fails
+silently on the user's machine. So the model does not author actions — it picks
+from eight known-good step types (`say`, `notify`, `show`, `open_url`, `wait`,
+`set_volume`, `set_brightness`, `comment`), and anything outside that is rejected
+before a file is written. Verified both directions: it built "Wind Down"
+correctly, and declined "a shortcut that orders me a pizza" instead of inventing
+a step.
+
+Gotcha worth recording: `shortcuts sign` requires the **input** file to end in
+`.shortcut`. Any other name fails with "isn't in the correct format", which reads
+like a malformed plist and is not.
+
+---
+
+## D-NOKEY — Why search stays on Wikipedia, and what Ollama actually is
+
+Ollama's web search was considered as a way to get general web search. It does
+not fit, for one reason: it is a **hosted API that requires an account and key**
+— their docs say "For access to Ollama's web search API, create an API key. A
+free Ollama account is required."
+
+Worth separating two things that share a name: Ollama-the-runtime runs models
+locally for free; Ollama-the-web-search is a cloud service on their servers. The
+"free and local" reputation belongs to the first and does not transfer to the
+second.
+
+So it cannot ship keyless. The options it leaves are the same ones every search
+provider leaves:
+
+1. every user makes an account and pastes a key — friction, but honest;
+2. embed our key — our quota and our bill for every customer, extractable from
+   the app bundle, and against the point of a local-first product.
+
+The genuinely keyless options remain Wikipedia (shipped) and self-hosted SearXNG
+(which means asking the user to run a server). Wikipedia stays the default; a
+bring-your-own-key field is the upgrade path if general search is ever wanted,
+and it works for Ollama, Brave or Tavily equally since they are all the same
+shape.

@@ -15,6 +15,7 @@ struct HomeCard: Identifiable {
         case search = "search_web"
         case app = "open_app"
         case shortcut = "run_shortcut"
+        case newShortcut = "create_shortcut"
 
         var icon: String {
             switch self {
@@ -29,6 +30,7 @@ struct HomeCard: Identifiable {
             case .search: return "magnifyingglass"
             case .app: return "app.badge"
             case .shortcut: return "bolt.fill"
+            case .newShortcut: return "wand.and.stars"
             }
         }
 
@@ -45,6 +47,7 @@ struct HomeCard: Identifiable {
             case .search: return .mint
             case .app: return .gray
             case .shortcut: return .yellow
+            case .newShortcut: return .yellow
             }
         }
 
@@ -119,6 +122,14 @@ struct HomeCard: Identifiable {
         case .shortcut:
             title = args["name"] as? String ?? "Shortcut"
             subtitle = "Running"
+        case .newShortcut:
+            title = args["name"] as? String ?? "New shortcut"
+            subtitle = "Review and add in Shortcuts"
+            items = (args["steps"] as? [[String: Any]] ?? []).map { step in
+                let type = (step["type"] as? String ?? "").replacingOccurrences(of: "_", with: " ")
+                let value = step["value"].map { "\($0)" } ?? ""
+                return value.isEmpty ? type : "\(type): \(value)"
+            }
         case .search:
             let hits = args["results"] as? [[String: Any]] ?? []
             title = hits.first?["title"] as? String ?? (args["query"] as? String ?? "Search")
