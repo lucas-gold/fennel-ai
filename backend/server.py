@@ -90,6 +90,12 @@ async def handler(ws) -> None:
     session = Session(send_control, send_audio, _stt, _llm, _tts,
                       _store, _memory, system=_current_system())
     await ws.send(P.encode("state", value="idle"))
+    # Push stored settings immediately. Without this the app boots showing its
+    # own defaults (all off) while the backend has them on — and the next Save
+    # writes those stale defaults back over the real ones.
+    await ws.send(P.encode("settings", daily_updates=_briefing.enabled,
+                           location=_briefing.place,
+                           web_search=_store.setting("web_search", "0") == "1"))
     await session.open_session()          # resume where the user left off
     asyncio.create_task(_refresh_briefing(session))  # never blocks the conversation
     try:

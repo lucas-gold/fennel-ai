@@ -194,6 +194,10 @@ class Session:
 
     async def _start_turn(self, audio: Optional[np.ndarray] = None,
                           text: Optional[str] = None, speak: bool = True) -> None:
+        # The user is back: drop any summary still waiting for a lull rather
+        # than letting it grab the LLM lock ahead of their turn.
+        if self._summary_task and not self._summary_task.done():
+            self._summary_task.cancel()
         await self._supersede()
         self._epoch += 1
         self._stop = threading.Event()
@@ -226,7 +230,11 @@ class Session:
             if not hits:
                 return {"name": name, "ok": False,
                         "error": f"nothing found on Wikipedia for {card['query']!r}"}
-            card = {**card, "results": [{"title": h.title, "link": h.link} for h in hits]}
+            # The card carries the extract, not just the title: a list of bare
+            # headings tells the user nothing about what was actually found.
+            card = {**card, "results": [
+                {"title": h.title, "extract": h.summary[:320], "link": h.link}
+                for h in hits]}
             result = {"ok": True, "source": "Wikipedia",
                       "results": [{"title": h.title, "extract": h.summary} for h in hits]}
 
@@ -391,15 +399,37 @@ class Session:
                 self._messages.append({"role": "assistant", "content": partial})
                 self._memory.remember(self._session_id, "assistant", partial)
 
+    def _window_over_budget(self) -> bool:
+        return len(self._messages) > config.VERBATIM_TURNS * 4 + 2
+
     async def _after_turn(self) -> None:
         """Housekeeping the user must never wait for."""
-        # Chunked eviction: rebuild only once the window is well past budget, so
-        # the re-prefill lands every few turns instead of every turn.
-        if len(self._messages) > config.VERBATIM_TURNS * 4 + 2:
+        # Safety valve: in a conversation with no pauses, `_start_turn` cancels
+        # maintenance every turn and the window would grow without limit. Well
+        # past budget we take the spike rather than let context run away.
+        if len(self._messages) > config.VERBATIM_TURNS * 8:
+            print("[session] window far over budget; trimming inline", flush=True)
             self._rebuild()
+            return
         if self._summary_task and not self._summary_task.done():
             return
-        if self._memory.needs_summary(self._session_id):
-            sid = self._session_id
-            self._summary_task = asyncio.create_task(
-                asyncio.to_thread(self._memory.summarise, sid, self._llm))
+        if self._window_over_budget() or self._memory.needs_summary(self._session_id):
+            self._summary_task = asyncio.create_task(self._maintain_when_idle())
+
+    async def _maintain_when_idle(self) -> None:
+        """Trim the window and summarise during a lull, never straight after a turn.
+
+        Both hold the LLM lock for seconds. Trimming the window is the worse of
+        the two: it changes the prompt at the front, so the next turn pays a full
+        re-prefill — measured at 2.2 s, landing on one unlucky turn in ~17, which
+        is exactly the intermittent hitch you notice in conversation. Doing it in
+        a pause and pre-warming the new prompt removes the spike; `_start_turn`
+        cancels this if the user comes back first.
+        """
+        await asyncio.sleep(config.SUMMARY_IDLE_S)
+        sid = self._session_id
+        if self._window_over_budget():
+            self._rebuild()
+            await asyncio.to_thread(self._llm.warm, list(self._messages))
+        if self._memory.needs_summary(sid):
+            await asyncio.to_thread(self._memory.summarise, sid, self._llm)

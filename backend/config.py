@@ -38,7 +38,8 @@ MAX_TOKENS = 1024 if TIER == "large" else 512
 LLM_MODEL = "mlx-community/Qwen3-4B-Instruct-2507-4bit"
 LLM_SYSTEM = (
     "You are a warm, concise companion. Keep replies short, natural, and easy "
-    "to speak aloud."
+    "to speak aloud. Emoji are rare seasoning, not punctuation — most replies "
+    "should have none at all, and never more than one."
 )
 LLM_MAX_TOKENS = MAX_TOKENS
 
@@ -46,6 +47,10 @@ LLM_MAX_TOKENS = MAX_TOKENS
 # How many times a turn may go LLM → tool → LLM before we force a plain reply.
 # 2 covers "remind me X and put Y on my calendar"; more invites runaway loops.
 LLM_TOOL_ROUNDS = 2
+# How long the conversation must be quiet before the rolling summary runs. It
+# holds the LLM lock for seconds, so it waits for a genuine pause instead of
+# firing the instant a turn ends and blocking whatever the user says next.
+SUMMARY_IDLE_S = 25
 # The app performs the real EventKit write and reports back. We wait this long
 # so the spoken confirmation reflects what actually happened (including a
 # permission denial) — EventKit writes take ~ms, so this only bites on failure.

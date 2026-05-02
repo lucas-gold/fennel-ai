@@ -13,6 +13,8 @@ struct HomeCard: Identifiable {
         case agenda = "agenda"
         case link = "open_link"
         case search = "search_web"
+        case app = "open_app"
+        case shortcut = "run_shortcut"
 
         var icon: String {
             switch self {
@@ -25,6 +27,8 @@ struct HomeCard: Identifiable {
             case .agenda: return "list.bullet.rectangle"
             case .link: return "safari"
             case .search: return "magnifyingglass"
+            case .app: return "app.badge"
+            case .shortcut: return "bolt.fill"
             }
         }
 
@@ -39,6 +43,8 @@ struct HomeCard: Identifiable {
             case .agenda: return .indigo
             case .link: return .cyan
             case .search: return .mint
+            case .app: return .gray
+            case .shortcut: return .yellow
             }
         }
 
@@ -107,14 +113,26 @@ struct HomeCard: Identifiable {
             title = args["label"] as? String ?? "Link"
             subtitle = URL(string: args["url"] as? String ?? "")?.host
             status = .done
+        case .app:
+            title = args["name"] as? String ?? "App"
+            subtitle = "Opening"
+        case .shortcut:
+            title = args["name"] as? String ?? "Shortcut"
+            subtitle = "Running"
         case .search:
-            title = args["query"] as? String ?? "Search"
+            let hits = args["results"] as? [[String: Any]] ?? []
+            title = hits.first?["title"] as? String ?? (args["query"] as? String ?? "Search")
             subtitle = "Wikipedia"
-            items = (args["results"] as? [[String: Any]] ?? [])
-                .compactMap { $0["title"] as? String }
+            // Show what was actually found, not a list of bare headings.
+            body = hits.first?["extract"] as? String
+            items = hits.dropFirst().compactMap { $0["title"] as? String }
+            searchLink = (hits.first?["link"] as? String).flatMap(URL.init(string:))
             status = .done
         }
     }
+
+    /// Article link for a `.search` card, shown as a "Read more" button.
+    var searchLink: URL?
 
     /// When a `.timer` card fires. The countdown is drawn from this rather than
     /// ticked in the model, so it stays correct if the app is busy.
@@ -189,6 +207,10 @@ struct HomeCardView: View {
                 }
                 if card.kind == .song { musicButtons }
                 if card.kind == .timer, let ends = card.endsAt { CountdownLabel(ends: ends) }
+                if card.kind == .search, let url = card.searchLink {
+                    Link("Read on Wikipedia", destination: url)
+                        .font(.caption2.weight(.medium)).padding(.top, 4)
+                }
                 if card.kind == .link, let url = URL(string: card.args["url"] as? String ?? "") {
                     Link("Open", destination: url)
                         .font(.caption2.weight(.medium)).padding(.top, 4)

@@ -270,6 +270,12 @@ final class ChatModel: ObservableObject {
         case .agenda:
             let a = try await EventKitBridge.agenda(range: card.args["range"] as? String ?? "today")
             return (nil, ["items": a.lines, "count": a.count], a.lines)
+        case .app:
+            try await MacActions.openApp(named: card.args["name"] as? String ?? "")
+            return (nil, nil, [])
+        case .shortcut:
+            try await MacActions.runShortcut(named: card.args["name"] as? String ?? "")
+            return (nil, nil, [])
         case .panel, .fact, .song, .timer, .link, .search:
             return (nil, nil, [])       // the card itself is the whole effect
         }

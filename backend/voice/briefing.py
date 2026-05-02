@@ -55,8 +55,18 @@ class Briefing:
             return None
         return self._store.briefing(day or today())
 
+    def _fingerprint(self) -> str:
+        """What today's briefing was built from. Changing the city has to
+        invalidate it: "is there a briefing for today" was not enough, and the
+        result was a saved city that never produced any weather."""
+        return f"{today()}|{self.place.strip().lower()}"
+
     def is_stale(self) -> bool:
-        return self.enabled and self._store.briefing(today()) is None
+        if not self.enabled:
+            return False
+        if self._store.briefing(today()) is None:
+            return True
+        return self._store.setting("briefing_inputs") != self._fingerprint()
 
     def build(self, embedder=None) -> Optional[str]:
         """Fetch, compose, store, and index. Blocking and network-bound — call it
@@ -108,6 +118,7 @@ class Briefing:
 
         text = header + "\n\n" + "\n".join(lines)
         self._store.set_briefing(day, text)
+        self._store.set_setting("briefing_inputs", self._fingerprint())
         pruned = self._store.prune_chunks(config.ARCHIVE_KEEP_DAYS)
         print(f"[briefing] {day}: {len(lines)} lines, {len(text)} chars, "
               f"{len(rows)} archived, {pruned} pruned", flush=True)
