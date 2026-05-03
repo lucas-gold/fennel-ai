@@ -8,7 +8,8 @@ struct MyAIApp: App {
         WindowGroup("my_ai") {
             RootView()
                 .environmentObject(chat)
-                .frame(minWidth: 760, minHeight: 540)
+                // 320 sidebar + 460 chat minimum, so the split never fights itself.
+                .frame(minWidth: 820, minHeight: 580)
                 .onAppear { chat.connect() }
         }
     }

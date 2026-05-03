@@ -2,68 +2,162 @@ import SwiftUI
 
 struct RootView: View {
     var body: some View {
-        HSplitView {
-            HomePanel().frame(minWidth: 240, idealWidth: 280)
-            ChatPanel().frame(minWidth: 420)
+        HStack(spacing: 0) {
+            HomePanel()
+                .frame(width: 320)
+                .background(.ultraThinMaterial)
+            Divider()
+            ChatPanel()
+                .frame(minWidth: 460)
         }
+        .background(Color(nsColor: .textBackgroundColor))
     }
 }
 
-/// Reactive home surface: the voice orb + (Stage 3) reminder/calendar/pinned
-/// cards driven by backend tool calls.
+// MARK: - Home
+
+/// The voice surface: the orb, and whatever the assistant has put on screen.
 private struct HomePanel: View {
     @EnvironmentObject var chat: ChatModel
 
     var body: some View {
-        VStack(spacing: 18) {
-            HStack(spacing: 8) {
-                Text("Home").font(.title2).bold()
-                Spacer()
-                Circle().fill(chat.connected ? Color.green : Color.red)
-                    .frame(width: 8, height: 8)
-                Text(chat.connected ? "Backend" : "Offline")
-                    .font(.caption).foregroundStyle(.secondary)
-                SettingsMenu()
-            }
+        VStack(spacing: 0) {
+            header
+            orbSection
+            if chat.cards.isEmpty { emptyState } else { cardList }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
 
+    private var header: some View {
+        HStack(spacing: 6) {
+            Text("my_ai").font(Theme.title(15, .bold))
+            Circle()
+                .fill(chat.connected ? Color.green : Color.orange)
+                .frame(width: 6, height: 6)
+                .help(chat.connected ? "Connected" : "Backend not running")
+            Spacer()
+            SettingsMenu()
+        }
+        .padding(.horizontal, Theme.gutter)
+        .padding(.top, 14)
+    }
+
+    private var orbSection: some View {
+        VStack(spacing: 14) {
             VoiceOrb(state: chat.state, listening: chat.listening, level: chat.level)
                 .onTapGesture { chat.toggleListening() }
-            Text(chat.listening ? "Listening — tap to stop"
-                                : (chat.state == .idle ? "Tap to talk" : chat.state.label))
-                .font(.callout).foregroundStyle(.secondary)
+            Text(statusLine)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(.secondary)
+                .contentTransition(.opacity)
+                .animation(.easeInOut(duration: 0.2), value: statusLine)
+        }
+        .padding(.vertical, 28)
+    }
 
-            Divider()
+    private var statusLine: String {
+        switch chat.state {
+        case .speaking: return "Speaking"
+        case .thinking: return "Thinking"
+        default: return chat.listening ? "Listening — tap to stop" : "Tap to talk"
+        }
+    }
 
-            if chat.cards.isEmpty {
-                Spacer()
-                Text("Ask for a reminder, an event, or a list — it shows up here.")
-                    .font(.footnote).foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-                Spacer()
-            } else {
-                ScrollView {
-                    LazyVStack(spacing: 8) {
-                        ForEach(chat.cards) { card in
-                            HomeCardView(card: card, onDismiss: {
-                                withAnimation(.easeOut(duration: 0.15)) { chat.dismiss(card) }
-                            }, onUndo: { chat.undoDelete(card) })
-                        }
-                    }
-                    .padding(.vertical, 2)
+    private var emptyState: some View {
+        VStack(spacing: 8) {
+            Spacer()
+            Image(systemName: "sparkles")
+                .font(.system(size: 18))
+                .foregroundStyle(.tertiary)
+            Text("Reminders, timers and anything it looks up\nwill appear here.")
+                .font(.system(size: 11))
+                .foregroundStyle(.tertiary)
+                .multilineTextAlignment(.center)
+                .lineSpacing(2)
+            Spacer()
+        }
+        .padding(.horizontal, Theme.gutter)
+    }
+
+    private var cardList: some View {
+        ScrollView {
+            LazyVStack(spacing: 8) {
+                ForEach(chat.cards) { card in
+                    HomeCardView(card: card, onDismiss: {
+                        withAnimation(.easeOut(duration: 0.18)) { chat.dismiss(card) }
+                    }, onUndo: { chat.undoDelete(card) })
                 }
             }
+            .padding(.horizontal, Theme.gutter)
+            .padding(.bottom, 16)
         }
-        .padding()
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .scrollIndicators(.never)
     }
 }
 
-/// Everything network-related lives behind this one control, off by default.
+/// The orb. Three concentric layers that each read at a glance: a soft halo that
+/// breathes with mic level, a glass body, and the state colour. Motion is slow
+/// and continuous — a fast or jittery orb makes the whole app feel anxious.
+private struct VoiceOrb: View {
+    let state: AssistantState
+    let listening: Bool
+    let level: Float
+
+    @State private var pulse = false
+
+    private var colors: [Color] { Theme.stateColors(state, listening: listening) }
+    private var swell: CGFloat { 1 + CGFloat(min(level, 1)) * 0.28 }
+
+    var body: some View {
+        ZStack {
+            // Halo — tracks the voice, so you can see it hearing you.
+            Circle()
+                .fill(RadialGradient(colors: [colors[0].opacity(0.34), .clear],
+                                     center: .center, startRadius: 8, endRadius: 88))
+                .frame(width: 176, height: 176)
+                .scaleEffect(swell)
+                .animation(.easeOut(duration: 0.12), value: level)
+
+            // Slow breath, so it looks alive while idle.
+            Circle()
+                .strokeBorder(colors[0].opacity(0.22), lineWidth: 1)
+                .frame(width: 128, height: 128)
+                .scaleEffect(pulse ? 1.06 : 0.97)
+                .animation(.easeInOut(duration: 2.6).repeatForever(autoreverses: true),
+                           value: pulse)
+
+            Circle()
+                .fill(LinearGradient(colors: colors,
+                                     startPoint: .topLeading, endPoint: .bottomTrailing))
+                .frame(width: 92, height: 92)
+                .shadow(color: colors[0].opacity(0.34), radius: 18, y: 6)
+                .overlay(
+                    Circle().strokeBorder(.white.opacity(0.20), lineWidth: 1))
+                .scaleEffect(1 + CGFloat(min(level, 1)) * 0.05)
+                .animation(.easeOut(duration: 0.12), value: level)
+
+            Image(systemName: listening ? "waveform" : "mic.slash.fill")
+                .font(.system(size: 24, weight: .medium))
+                .foregroundStyle(.white)
+                .shadow(radius: 2)
+                .contentTransition(.symbolEffect(.replace))
+        }
+        .frame(width: 176, height: 176)
+        .contentShape(Circle())
+        .animation(.easeInOut(duration: 0.35), value: state)
+        .onAppear { pulse = true }
+    }
+}
+
+// MARK: - Settings
+
+/// Everything network-related behind one control, off by default.
 ///
-/// The wording is deliberate: this app's whole claim is that nothing leaves the
-/// machine, so the exception has to be legible. The daily briefing fetches a
-/// fixed list of feeds and reveals nothing about the user — which is why it is
-/// its own switch, and why the city is typed rather than read from CoreLocation.
+/// The wording is deliberate: this app's claim is that nothing leaves the
+/// machine, so the exception has to be legible. The daily briefing reads a fixed
+/// source list and reveals nothing about the user; search sends their actual
+/// question. Two switches, because those are two different promises.
 private struct SettingsMenu: View {
     @EnvironmentObject var chat: ChatModel
     @State private var open = false
@@ -71,125 +165,158 @@ private struct SettingsMenu: View {
     private var online: Bool { chat.dailyUpdates || chat.webSearch }
 
     var body: some View {
-        Button { open.toggle() } label: {
-            Image(systemName: online ? "wifi" : "wifi.slash")
-                .foregroundStyle(online ? Color.accentColor : Color.secondary)
-        }
-        .buttonStyle(.plain)
-        .help("Network settings")
-        // A popover, not a Menu: menu content on macOS is limited to buttons and
-        // labels, so the TextField this used to hold silently did nothing and
-        // the city could never actually be set.
+        IconButton(symbol: online ? "wifi" : "wifi.slash",
+                   help: "Network settings", active: online) { open.toggle() }
         .popover(isPresented: $open, arrowEdge: .bottom) {
-            VStack(alignment: .leading, spacing: 12) {
-                Text("Network").font(.headline)
-                Text("Off by default. Everything else in my_ai runs entirely on this Mac.")
-                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            VStack(alignment: .leading, spacing: 14) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Network").font(Theme.title(14, .semibold))
+                    Text("Off by default. Everything else runs on this Mac.")
+                        .font(.system(size: 11)).foregroundStyle(.secondary)
+                }
 
                 Divider()
 
-                Toggle("Daily updates", isOn: Binding(
+                toggleRow("Daily updates", isOn: Binding(
                     get: { chat.dailyUpdates },
-                    set: { chat.dailyUpdates = $0; chat.saveSettings() }))
-                Text("Fetches weather and headlines once a day from a fixed list of sources. Reveals nothing about you.")
-                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    set: { chat.dailyUpdates = $0; chat.saveSettings() }),
+                    note: "Weather and headlines, once a day, from a fixed list of sources.")
 
-                HStack {
-                    Text("City").frame(width: 34, alignment: .leading)
-                    TextField("e.g. Toronto", text: $chat.location)
+                HStack(spacing: 6) {
+                    TextField("City for weather", text: $chat.location)
                         .textFieldStyle(.roundedBorder)
+                        .font(.system(size: 12))
                         .onSubmit { chat.saveSettings() }
                     Button("Save") { chat.saveSettings() }
+                        .controlSize(.small)
                 }
                 .disabled(!chat.dailyUpdates)
+
                 if chat.dailyUpdates && chat.location.isEmpty {
-                    Label("Set a city or you'll get headlines but no weather.",
-                          systemImage: "exclamationmark.circle")
-                        .font(.caption).foregroundStyle(.orange)
+                    Label("Add a city or you'll get headlines but no weather.",
+                          systemImage: "exclamationmark.circle.fill")
+                        .font(.system(size: 10)).foregroundStyle(.orange)
                 }
 
                 Divider()
 
-                Toggle("Look things up on Wikipedia", isOn: Binding(
+                toggleRow("Look things up on Wikipedia", isOn: Binding(
                     get: { chat.webSearch },
-                    set: { chat.webSearch = $0; chat.saveSettings() }))
-                Text("Lets it search when it doesn't know something. Unlike daily updates, this sends your question to Wikipedia.")
-                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    set: { chat.webSearch = $0; chat.saveSettings() }),
+                    note: "Unlike daily updates, this sends your question out.")
             }
-            .padding(14)
-            .frame(width: 310)
+            .padding(16)
+            .frame(width: 320)
+        }
+    }
+
+    private func toggleRow(_ title: String, isOn: Binding<Bool>, note: String) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Toggle(title, isOn: isOn)
+                .toggleStyle(.switch)
+                .controlSize(.small)
+                .font(.system(size: 12, weight: .medium))
+            Text(note)
+                .font(.system(size: 10)).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 }
 
-/// The on-screen voice interface: a halo that swells with mic level and recolors
-/// by assistant state (idle/listening/thinking/speaking).
-private struct VoiceOrb: View {
-    let state: AssistantState
-    let listening: Bool
-    let level: Float
-
-    private var color: Color {
-        switch state {
-        case .speaking: return .green
-        case .thinking: return .orange
-        default: return listening ? .accentColor : .secondary
-        }
-    }
-
-    var body: some View {
-        ZStack {
-            Circle()
-                .fill(color.opacity(0.22))
-                .frame(width: 120, height: 120)
-                .scaleEffect(1 + CGFloat(level) * 0.6)
-                .animation(.easeOut(duration: 0.10), value: level)
-            Circle().fill(color).frame(width: 62, height: 62)
-            Image(systemName: listening ? "mic.fill" : "mic.slash.fill")
-                .font(.system(size: 22, weight: .semibold))
-                .foregroundStyle(.white)
-        }
-        .frame(width: 140, height: 140)
-        .contentShape(Circle())
-    }
-}
+// MARK: - Chat
 
 private struct ChatPanel: View {
     @EnvironmentObject var chat: ChatModel
     @State private var draft = ""
+    @FocusState private var focused: Bool
     private let bottomID = "bottom"
 
     var body: some View {
         VStack(spacing: 0) {
             SessionBar()
-            ScrollViewReader { proxy in
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 8) {
-                        ForEach(chat.messages) { MessageRow(message: $0) }
-                        Color.clear.frame(height: 1).id(bottomID)
-                    }
-                    .padding()
+            transcript
+            composer
+        }
+    }
+
+    private var transcript: some View {
+        ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 14) {
+                    if chat.messages.isEmpty { welcome }
+                    ForEach(chat.messages) { MessageRow(message: $0) }
+                    if chat.state == .thinking { TypingIndicator() }
+                    Color.clear.frame(height: 1).id(bottomID)
                 }
-                .onChange(of: chat.messages.count) { _, _ in
-                    withAnimation(.easeOut(duration: 0.15)) { proxy.scrollTo(bottomID, anchor: .bottom) }
-                }
-                .onChange(of: chat.messages.last?.text) { _, _ in
+                .padding(.horizontal, 22)
+                .padding(.vertical, 18)
+            }
+            .scrollIndicators(.never)
+            .onChange(of: chat.messages.count) { _, _ in
+                withAnimation(.easeOut(duration: 0.18)) {
                     proxy.scrollTo(bottomID, anchor: .bottom)
                 }
             }
-            Divider()
-            HStack {
-                TextField("Message…", text: $draft)
-                    .textFieldStyle(.roundedBorder)
-                    .onSubmit(send)
-                Button("Send", action: send).disabled(draft.isEmpty)
+            .onChange(of: chat.messages.last?.text) { _, _ in
+                proxy.scrollTo(bottomID, anchor: .bottom)
             }
-            .padding(.horizontal).padding(.top, 8)
-            Toggle("Speak typed replies", isOn: $chat.speakTypedReplies)
-                .toggleStyle(.checkbox)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .padding(.horizontal).padding(.bottom, 8)
+        }
+    }
+
+    private var welcome: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Hello.").font(Theme.title(26, .bold))
+            Text("Tap the orb and talk, or just type below.")
+                .font(.system(size: 13)).foregroundStyle(.secondary)
+        }
+        .padding(.top, 40)
+        .padding(.bottom, 8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var composer: some View {
+        VStack(spacing: 0) {
+            Divider()
+            HStack(spacing: 10) {
+                TextField("Message", text: $draft, axis: .vertical)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 13))
+                    .lineLimit(1...5)
+                    .focused($focused)
+                    .onSubmit(send)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 9)
+                    .background(Capsule().fill(.background.secondary))
+                    .overlay(Capsule().strokeBorder(
+                        Color.primary.opacity(focused ? 0.16 : 0.08), lineWidth: 1))
+
+                Button(action: send) {
+                    Image(systemName: "arrow.up")
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundStyle(.white)
+                        .frame(width: 30, height: 30)
+                        .background(Circle().fill(
+                            draft.isEmpty ? AnyShapeStyle(Color.secondary.opacity(0.35))
+                                          : AnyShapeStyle(Theme.accent)))
+                }
+                .buttonStyle(.plain)
+                .disabled(draft.trimmingCharacters(in: .whitespaces).isEmpty)
+                .animation(.easeOut(duration: 0.15), value: draft.isEmpty)
+            }
+            .padding(.horizontal, 18)
+            .padding(.top, 12)
+
+            HStack {
+                Toggle("Speak typed replies", isOn: $chat.speakTypedReplies)
+                    .toggleStyle(.checkbox)
+                    .controlSize(.small)
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+                Spacer()
+            }
+            .padding(.horizontal, 20)
+            .padding(.top, 6)
+            .padding(.bottom, 10)
         }
     }
 
@@ -201,22 +328,54 @@ private struct ChatPanel: View {
     }
 }
 
+/// Assistant replies are plain text on the page; only the user gets a bubble.
+/// Two bubble styles facing each other is heavier than this needs to be, and the
+/// asymmetry makes it obvious at a glance who said what.
 private struct MessageRow: View {
     let message: ChatMessage
 
     var body: some View {
         HStack {
-            if message.role == .user { Spacer(minLength: 40) }
+            if message.role == .user { Spacer(minLength: 60) }
             Text(message.text)
+                .font(.system(size: 13))
+                .lineSpacing(2.5)
                 .textSelection(.enabled)
-                .padding(10)
-                .background(
-                    message.role == .user
-                        ? Color.accentColor.opacity(0.20)
-                        : Color.gray.opacity(0.15)
-                )
-                .clipShape(RoundedRectangle(cornerRadius: 10))
-            if message.role == .assistant { Spacer(minLength: 40) }
+                .padding(.horizontal, message.role == .user ? 13 : 0)
+                .padding(.vertical, message.role == .user ? 9 : 0)
+                .background {
+                    if message.role == .user {
+                        RoundedRectangle(cornerRadius: 16, style: .continuous)
+                            .fill(Theme.accent)
+                    }
+                }
+                .foregroundStyle(message.role == .user ? AnyShapeStyle(.white)
+                                                       : AnyShapeStyle(.primary))
+            if message.role == .assistant { Spacer(minLength: 60) }
+        }
+        .transition(.opacity.combined(with: .move(edge: .bottom)))
+    }
+}
+
+/// Three dots while it thinks — the chat should never look frozen.
+private struct TypingIndicator: View {
+    @State private var phase = 0.0
+
+    var body: some View {
+        HStack(spacing: 4) {
+            ForEach(0..<3, id: \.self) { i in
+                Circle()
+                    .fill(Color.secondary.opacity(0.5))
+                    .frame(width: 5, height: 5)
+                    .scaleEffect(phase == Double(i) ? 1.35 : 0.85)
+                    .animation(.easeInOut(duration: 0.3), value: phase)
+            }
+        }
+        .onAppear {
+            Timer.scheduledTimer(withTimeInterval: 0.28, repeats: true) { t in
+                DispatchQueue.main.async { phase = (phase + 1).truncatingRemainder(dividingBy: 3) }
+                if phase.isNaN { t.invalidate() }
+            }
         }
     }
 }

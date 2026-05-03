@@ -188,33 +188,44 @@ struct HomeCardView: View {
             Button("Undo", action: onUndo).buttonStyle(.plain)
                 .font(.caption.weight(.semibold)).foregroundStyle(Color.accentColor)
         }
-        .padding(.horizontal, 10).padding(.vertical, 7)
-        .background(Color.gray.opacity(0.10))
-        .clipShape(RoundedRectangle(cornerRadius: 9))
+        .padding(.horizontal, 11).padding(.vertical, 8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .cardSurface()
     }
 
     private var full: some View {
         HStack(alignment: .top, spacing: 10) {
             Image(systemName: card.kind.icon)
-                .foregroundStyle(card.kind.tint)
-                .font(.system(size: 14, weight: .semibold))
-                .frame(width: 18)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(.white)
+                .frame(width: 22, height: 22)
+                .background(Circle().fill(card.kind.tint.gradient))
 
-            VStack(alignment: .leading, spacing: 4) {
-                Text(card.title).font(.callout).fontWeight(.medium)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(card.title)
+                    .font(.system(size: 12.5, weight: .semibold))
+                    .fixedSize(horizontal: false, vertical: true)
                 if let subtitle = card.subtitle {
-                    Text(subtitle).font(.caption).foregroundStyle(.secondary)
+                    Text(subtitle).font(.system(size: 11)).foregroundStyle(.secondary)
                 }
                 if let body = card.body, !body.isEmpty {
-                    Text(body).font(.caption).foregroundStyle(.secondary)
+                    Text(body)
+                        .font(.system(size: 11)).foregroundStyle(.secondary)
+                        .lineSpacing(1.5)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
                 if !card.items.isEmpty {
-                    VStack(alignment: .leading, spacing: 2) {
+                    VStack(alignment: .leading, spacing: 3) {
                         ForEach(card.items, id: \.self) { item in
-                            Text("• \(item)").font(.caption)
+                            HStack(alignment: .top, spacing: 5) {
+                                Circle().fill(card.kind.tint.opacity(0.55))
+                                    .frame(width: 3, height: 3).padding(.top, 5)
+                                Text(item).font(.system(size: 11))
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
                         }
                     }
-                    .padding(.top, 2)
+                    .padding(.top, 3)
                 }
                 if card.kind == .song { musicButtons }
                 if card.kind == .timer, let ends = card.endsAt { CountdownLabel(ends: ends) }
@@ -236,19 +247,17 @@ struct HomeCardView: View {
 
             Button(action: onDismiss) {
                 Image(systemName: "xmark")
-                    .font(.system(size: 9, weight: .bold))
+                    .font(.system(size: 8, weight: .bold))
                     .foregroundStyle(.secondary)
+                    .frame(width: 18, height: 18)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .help("Dismiss")
+            .help(card.kind.writesToEventKit ? "Delete" : "Dismiss")
         }
-        .padding(10)
-        .background(card.kind.tint.opacity(0.10))
-        .overlay(
-            RoundedRectangle(cornerRadius: 9)
-                .stroke(card.kind.tint.opacity(0.28), lineWidth: 1)
-        )
-        .clipShape(RoundedRectangle(cornerRadius: 9))
+        .padding(11)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .cardSurface(tint: card.kind.tint)
         .transition(.move(edge: .top).combined(with: .opacity))
     }
 

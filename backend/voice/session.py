@@ -34,6 +34,15 @@ from voice.tools import ANSWERING_TOOLS, ToolStream, normalize, system_prompt
 from voice.tts import ClauseSplitter, KokoroTTS
 from voice.vad import Endpointer
 
+# Tools slow enough that silence reads as a hang. The backend says these, not
+# the model: instructing the model to speak before calling made it sometimes say
+# the line and never call at all.
+LEAD_INS = {
+    "search_web": "Let me look that up.",
+    "create_shortcut": "Let me put that together.",
+    "agenda": "Let me check.",
+}
+
 Control = Callable[[str], Awaitable[None]]   # send a JSON control string
 Audio = Callable[[bytes], Awaitable[None]]   # send a binary audio frame
 
@@ -206,7 +215,7 @@ class Session:
 
     # ── tools ──────────────────────────────────────────────────────────────
 
-    async def _run_tool(self, call: dict) -> dict:
+    async def _run_tool(self, call: dict, say=None) -> dict:
         """Normalize, hand to the app, and wait briefly for the real outcome so
         the model's spoken confirmation isn't a lie."""
         name, args = call["name"], call["args"]
@@ -214,6 +223,10 @@ class Session:
         print(f"[tool] {name} {card or args}", flush=True)
         if not result.get("ok"):
             return {"name": name, **result}
+
+        # Fill the silence before the slow part starts, not after.
+        if say is not None and name in LEAD_INS:
+            await say(LEAD_INS[name])
 
         if name == "set_fact":
             self._store.set_fact(card["key"], card["value"])
@@ -337,13 +350,24 @@ class Session:
                     return " " + prose
                 return prose
 
+            async def lead_in(text: str) -> None:
+                """Speak a holding line for a slow tool — but only if the model
+                hasn't already said something itself, or they stack up."""
+                nonlocal said
+                if said.strip():
+                    return
+                said += text
+                await self._send_control(P.encode("token", turn=turn, text=text))
+                if do_speak:
+                    await speak_clause(text)
+
             async for chunk in self._llm.astream(self._messages, stop=self._stop):
                 if not self._live(epoch):
                     break
                 prose, new_calls = ts.feed(chunk)
                 calls += new_calls
                 for c in new_calls:            # fire while the model still talks
-                    c["result"] = await self._run_tool(c)
+                    c["result"] = await self._run_tool(c, say=lead_in)
                 if not prose:
                     continue
                 prose = space(prose)
@@ -357,7 +381,7 @@ class Session:
             if self._live(epoch):
                 prose, new_calls = ts.flush()
                 for c in new_calls:
-                    c["result"] = await self._run_tool(c)
+                    c["result"] = await self._run_tool(c, say=lead_in)
                 calls += new_calls
                 if prose:
                     prose = space(prose)

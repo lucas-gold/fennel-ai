@@ -1,0 +1,92 @@
+import SwiftUI
+
+/// One place for the visual language, so spacing and radii stay consistent
+/// instead of being re-invented per view.
+///
+/// The look is deliberately quiet: a calm surface, one accent gradient that only
+/// the orb and the user's own words get to use, and generous whitespace. A voice
+/// app is mostly *looked at* while it talks, so the screen should reward a
+/// glance and never compete with the conversation.
+enum Theme {
+    static let radius: CGFloat = 14
+    static let cardRadius: CGFloat = 12
+    static let gutter: CGFloat = 20
+
+    /// The single accent gradient. Reserved for the orb and the user's bubbles;
+    /// everything else stays neutral so these read as "you" and "it".
+    static let accent = LinearGradient(
+        colors: [Color(red: 0.42, green: 0.44, blue: 0.98),
+                 Color(red: 0.67, green: 0.40, blue: 0.95)],
+        startPoint: .topLeading, endPoint: .bottomTrailing)
+
+    static func stateColors(_ state: AssistantState, listening: Bool) -> [Color] {
+        switch state {
+        case .speaking:  return [Color(red: 0.20, green: 0.78, blue: 0.60),
+                                 Color(red: 0.30, green: 0.68, blue: 0.90)]
+        case .thinking:  return [Color(red: 0.98, green: 0.66, blue: 0.28),
+                                 Color(red: 0.95, green: 0.45, blue: 0.45)]
+        default:
+            return listening
+                ? [Color(red: 0.42, green: 0.44, blue: 0.98),
+                   Color(red: 0.67, green: 0.40, blue: 0.95)]
+                : [Color.secondary.opacity(0.45), Color.secondary.opacity(0.30)]
+        }
+    }
+
+    /// Headings use the rounded face — softer than the default, still unmistakably
+    /// native, and it suits something you talk to.
+    static func title(_ size: CGFloat, _ weight: Font.Weight = .semibold) -> Font {
+        .system(size: size, weight: weight, design: .rounded)
+    }
+}
+
+/// A surface that reads as a raised panel without a hard border.
+struct CardSurface: ViewModifier {
+    var tint: Color = .clear
+    var radius: CGFloat = Theme.cardRadius
+
+    func body(content: Content) -> some View {
+        content
+            .background(
+                RoundedRectangle(cornerRadius: radius, style: .continuous)
+                    .fill(.background.secondary)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: radius, style: .continuous)
+                            .fill(tint.opacity(0.07)))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: radius, style: .continuous)
+                    .strokeBorder(Color.primary.opacity(0.07), lineWidth: 1))
+            .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
+    }
+}
+
+extension View {
+    func cardSurface(tint: Color = .clear, radius: CGFloat = Theme.cardRadius) -> some View {
+        modifier(CardSurface(tint: tint, radius: radius))
+    }
+}
+
+/// Small circular icon button used across the chrome.
+struct IconButton: View {
+    let symbol: String
+    var help: String = ""
+    var active = false
+    let action: () -> Void
+
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(active ? Color.accentColor : Color.secondary)
+                .frame(width: 26, height: 26)
+                .background(
+                    Circle().fill(Color.primary.opacity(hovering ? 0.08 : 0)))
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .help(help)
+    }
+}
