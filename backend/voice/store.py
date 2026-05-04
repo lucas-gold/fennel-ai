@@ -121,6 +121,12 @@ class Store:
             cols = {r["name"] for r in self._db.execute("PRAGMA table_info(messages)")}
             if "vec" not in cols:
                 self._db.execute("ALTER TABLE messages ADD COLUMN vec BLOB")
+            # `content` is what the UI shows; `prompt_text` is what the model is
+            # replayed. They differ for tool turns: storing only the visible text
+            # dropped the <tool_call> blocks, so a resumed conversation became
+            # dozens of examples of describing an action instead of taking one.
+            if "prompt_text" not in cols:
+                self._db.execute("ALTER TABLE messages ADD COLUMN prompt_text TEXT")
             self._db.commit()
 
     # ── sessions ───────────────────────────────────────────────────────────
@@ -164,13 +170,14 @@ class Store:
     # ── messages ───────────────────────────────────────────────────────────
 
     def add_message(self, session_id: int, role: str, content: str,
-                    vec=None) -> int:
+                    vec=None, prompt_text: Optional[str] = None) -> int:
         now = time.time()
         blob = None if vec is None else vec.astype("float32").tobytes()
         with self._lock:
             cur = self._db.execute(
-                "INSERT INTO messages (session_id, role, content, ts, vec) VALUES (?,?,?,?,?)",
-                (session_id, role, content, now, blob))
+                "INSERT INTO messages (session_id, role, content, ts, vec, prompt_text)"
+                " VALUES (?,?,?,?,?,?)",
+                (session_id, role, content, now, blob, prompt_text))
             # First user line names the chat, so the session list is readable
             # without generating a title (which would cost a whole extra turn).
             if role == "user":
@@ -183,11 +190,12 @@ class Store:
             return int(cur.lastrowid)
 
     def messages(self, session_id: int, limit: Optional[int] = None) -> list[dict]:
-        q = "SELECT id, role, content, ts FROM messages WHERE session_id = ? ORDER BY id"
+        q = ("SELECT id, role, content, ts, prompt_text FROM messages"
+             " WHERE session_id = ? ORDER BY id")
         with self._lock:
             rows = self._db.execute(q, (session_id,)).fetchall()
-        out = [{"id": r["id"], "role": r["role"], "content": r["content"], "ts": r["ts"]}
-               for r in rows]
+        out = [{"id": r["id"], "role": r["role"], "content": r["content"], "ts": r["ts"],
+                "prompt_text": r["prompt_text"]} for r in rows]
         return out[-limit:] if limit else out
 
     # ── facts ──────────────────────────────────────────────────────────────
