@@ -499,3 +499,27 @@ trains itself, every session, on a version of events that never happened.
 A belt-and-braces guard went into the system prompt too ("never say you have
 done something unless you called the tool for it this turn"), because existing
 conversations still carry the poisoned history.
+
+**Two follow-ups, both learned the hard way.**
+
+*Legacy rows are worse than useless as demonstrations.* Conversations written
+before this fix have no `prompt_text`, so their assistant rows are laundered by
+definition. `window()` now replays those as `(earlier reply)` — the user still
+sees the real text in the chat, only the model's replay is elided. Isolated on a
+real 79-message conversation, same question each time:
+
+| replayed window | result |
+|---|---|
+| full history, 16 legacy messages | fabricated a reminder |
+| no history | called the tool |
+| history with assistant turns stubbed | called the tool |
+
+*A contaminated conversation cannot be repaired.* Once the model has fabricated,
+that fabrication is stored **faithfully** — it really is what it said — and no
+format-based rule can distinguish it from legitimate history. The session then
+sustains its own bad behaviour. The fix prevents new conversations from being
+poisoned; it cannot rescue one that already is. Those have to be abandoned.
+
+That asymmetry is the part worth remembering: a context bug that writes to
+durable storage is not a bug you can simply fix, because the corrupted data keeps
+teaching after the code is correct.
