@@ -462,3 +462,40 @@ The genuinely keyless options remain Wikipedia (shipped) and self-hosted SearXNG
 bring-your-own-key field is the upgrade path if general search is ever wanted,
 and it works for Ollama, Brave or Tavily equally since they are all the same
 shape.
+
+---
+
+## D-REPLAY — History must replay what the model did, not what the user saw
+
+Stage 4 stored only the *visible* reply text for each assistant turn. That looked
+right — it is what the chat shows — and it silently broke tool calling.
+
+The failure is self-reinforcing and took a while to see. A tool turn generates
+`<tool_call>…</tool_call>` plus prose; only the prose was stored. So when a
+session was resumed (or the window rebuilt), the model was replayed dozens of
+examples of *"user asks for a reminder → assistant describes a reminder in
+prose, no tool call"* — a near-perfect few-shot demonstration of faking it. It
+learned from its own laundered transcript. By the time the real conversation had
+forty turns it had stopped calling tools almost entirely, while still cheerfully
+narrating what it had "done":
+
+> user: create a reminder to buy eggs tomorrow
+> assistant: I'll set a reminder to buy eggs tomorrow. Here's the plan: …
+
+Nothing in the logs said anything was wrong, because from the backend's point of
+view the model simply chose not to call a tool.
+
+Fix: `messages` carries `content` (what the UI shows) *and* `prompt_text` (what
+the model is replayed) separately. A turn now persists every message it produced
+— assistant generations with their tool calls intact, and the `tool` result
+messages after them — with only the last assistant row carrying visible text.
+Verified by the test that matters: tool turns, disconnect, reconnect, tool turns
+again. 5/5, where the resumed half was the part that used to fail.
+
+The general lesson: **the transcript shown to the user and the transcript
+replayed to the model are different artefacts.** Conflating them means the model
+trains itself, every session, on a version of events that never happened.
+
+A belt-and-braces guard went into the system prompt too ("never say you have
+done something unless you called the tool for it this turn"), because existing
+conversations still carry the poisoned history.

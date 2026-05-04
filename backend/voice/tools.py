@@ -560,7 +560,10 @@ def system_prompt(base: str, now: Optional[datetime] = None) -> str:
         "that action taken. Most turns need no tool at all. Prefer plain "
         "conversation; never steer a chat toward setting a reminder, and don't "
         "reach for the tool you last used out of habit — pick the one that fits "
-        "this turn, or none. Do not announce a tool before calling it: call it, "
+        "this turn, or none. Never say you have done something, or describe what "
+        "you are about to do, unless you actually called the tool for it in this "
+        "turn — writing out what a reminder would look like is not setting one. "
+        "Do not announce a tool before calling it: call it, "
         "then confirm once, in one short spoken sentence. You are told whether "
         "it actually worked. Never read out tool syntax, JSON, or raw timestamps."
     )

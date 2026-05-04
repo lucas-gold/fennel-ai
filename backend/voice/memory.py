@@ -49,7 +49,8 @@ class Memory:
         self._retriever = retriever
         self._embedder = embedder
 
-    def remember(self, session_id: int, role: str, content: str) -> None:
+    def remember(self, session_id: int, role: str, content: str,
+                 prompt_text: Optional[str] = None) -> None:
         """Persist a turn, embedding it so recall can be gated on meaning.
         Embedding costs ~5 ms; matching without it costs a prompt full of noise."""
         vec = None
@@ -58,7 +59,8 @@ class Memory:
                 vec = self._embedder.encode_one(content)
             except Exception as exc:
                 print(f"[memory] embed failed, storing unindexed: {exc}", flush=True)
-        self._store.add_message(session_id, role, content, vec=vec)
+        self._store.add_message(session_id, role, content, vec=vec,
+                                prompt_text=prompt_text)
 
     def _recall(self, session_id: int, query: str, k: int = 2) -> list[dict]:
         """Past conversations worth quoting — usually none.
@@ -137,7 +139,10 @@ class Memory:
         keep = config.VERBATIM_TURNS * 2
         if len(rows) > keep * 2:
             rows = rows[-keep:]
-        return [{"role": r["role"], "content": r["content"]} for r in rows]
+        # Replay what the model actually produced, tool calls included — not the
+        # cleaned-up text the UI shows.
+        return [{"role": r["role"], "content": r.get("prompt_text") or r["content"]}
+                for r in rows]
 
     def needs_summary(self, session_id: int) -> bool:
         rows = self._store.messages(session_id)

@@ -306,11 +306,11 @@ class Session:
         # The store keeps what the user actually said; the prompt gets the
         # volatile preamble (clock + recall) glued on front — last position in
         # the prompt, so the cached prefix behind it survives (D4).
-        self._memory.remember(self._session_id, "user", text)
-        self._messages.append({
-            "role": "user",
-            "content": self._memory.preamble(self._session_id, text) + text,
-        })
+        prompt_user = self._memory.preamble(self._session_id, text) + text
+        self._memory.remember(self._session_id, "user", text,
+                              prompt_text=prompt_user)
+        self._messages.append({"role": "user", "content": prompt_user})
+        turn_start = len(self._messages)   # everything after this is this turn's
 
         self._turn_no += 1
         turn = self._turn_no
@@ -427,7 +427,7 @@ class Session:
         finally:
             self._assistant_active = False
             if self._live(epoch):
-                self._memory.remember(self._session_id, "assistant", visible.strip())
+                self._commit(turn_start, visible.strip())
                 await self._send_control(P.encode("turn_end", turn=turn))
                 if do_speak:
                     await self._send_control(P.encode("state", value="idle"))
@@ -436,10 +436,28 @@ class Session:
                 # barge-in: history records only what was actually spoken (D3)
                 partial = (spoken.strip() + " —").strip()
                 self._messages.append({"role": "assistant", "content": partial})
-                self._memory.remember(self._session_id, "assistant", partial)
+                self._commit(turn_start, partial)
 
     def _window_over_budget(self) -> bool:
         return len(self._messages) > config.VERBATIM_TURNS * 4 + 2
+
+    def _commit(self, start: int, visible: str) -> None:
+        """Persist every message this turn produced — assistant generations with
+        their <tool_call> blocks intact, and the tool results after them.
+
+        Only the last assistant message carries the visible text, because that is
+        what the chat shows; the rest store empty content and the app skips them.
+        Storing just the spoken text is what let a resumed conversation teach the
+        model to *describe* actions instead of taking them.
+        """
+        added = self._messages[start:]
+        last_assistant = max(
+            (i for i, m in enumerate(added) if m["role"] == "assistant"), default=-1)
+        for i, m in enumerate(added):
+            self._memory.remember(
+                self._session_id, m["role"],
+                content=visible if i == last_assistant else "",
+                prompt_text=m["content"])
 
     async def _after_turn(self) -> None:
         """Housekeeping the user must never wait for."""
