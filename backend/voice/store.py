@@ -18,8 +18,22 @@ import threading
 import time
 from typing import Any, Optional
 
-APP_DIR = os.path.expanduser("~/Library/Application Support/my_ai")
-DB_PATH = os.path.join(APP_DIR, "my_ai.sqlite3")
+APP_DIR = os.path.expanduser("~/Library/Application Support/Fennel")
+DB_PATH = os.path.join(APP_DIR, "fennel.sqlite3")
+_LEGACY_DB = os.path.expanduser("~/Library/Application Support/my_ai/my_ai.sqlite3")
+
+
+def _adopt_legacy(path: str) -> None:
+    """Carry a pre-rename database over rather than silently starting empty.
+    Moves the WAL sidecars too — copying only the main file loses recent writes."""
+    if os.path.exists(path) or not os.path.exists(_LEGACY_DB):
+        return
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    for suffix in ("", "-wal", "-shm"):
+        src = _LEGACY_DB + suffix
+        if os.path.exists(src):
+            os.replace(src, path + suffix)
+    print(f"[store] adopted the pre-rename database from {_LEGACY_DB}", flush=True)
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS sessions (
@@ -106,6 +120,8 @@ class Store:
         # Resolved at call time, not bound as a default, so tests can point
         # DB_PATH at a scratch file instead of the user's real database.
         path = path or DB_PATH
+        if path == DB_PATH:
+            _adopt_legacy(path)
         os.makedirs(os.path.dirname(path), exist_ok=True)
         # Serialised by _lock; the connection is shared across the event loop
         # and the worker threads that asyncio.to_thread hands us.

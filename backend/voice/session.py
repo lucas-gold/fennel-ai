@@ -16,8 +16,10 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import threading
 import time
+from collections import deque
 from typing import Awaitable, Callable, Optional
 from uuid import uuid4
 
@@ -42,6 +44,10 @@ LEAD_INS = {
     "create_shortcut": "Let me put that together.",
     "agenda": "Let me check.",
 }
+
+def _words(text: str) -> list[str]:
+    return re.findall(r"[a-z0-9']+", text.lower())
+
 
 Control = Callable[[str], Awaitable[None]]   # send a JSON control string
 Audio = Callable[[bytes], Awaitable[None]]   # send a binary audio frame
@@ -80,6 +86,8 @@ class Session:
         # buffers whole clauses, so playback outlives generation by seconds —
         # guarding only while `_assistant_active` left the tail unprotected.
         self._audio_until = 0.0
+        # What we recently said out loud, for the echo check below.
+        self._spoken_log: deque = deque(maxlen=40)
         self._rx = 0  # mic frames received (debug)
 
         # Tool calls awaiting the app's real-world result, keyed by call id.
@@ -170,7 +178,7 @@ class Session:
             await self._barge_in()
         if endpoint is not None:
             print(f"[vad] endpoint: {len(endpoint.audio)/16000:.2f}s", flush=True)
-            await self._start_turn(audio=endpoint.audio)
+            await self._start_turn(audio=endpoint.audio, echo_risk=guarded)
 
     async def feed_text(self, text: str, speak: bool = False) -> None:
         """Typed input: skip VAD/STT, go straight to the LLM. Speaks the reply
@@ -202,7 +210,8 @@ class Session:
             await self._turn_task
 
     async def _start_turn(self, audio: Optional[np.ndarray] = None,
-                          text: Optional[str] = None, speak: bool = True) -> None:
+                          text: Optional[str] = None, speak: bool = True,
+                          echo_risk: bool = False) -> None:
         # The user is back: drop any summary still waiting for a lull rather
         # than letting it grab the LLM lock ahead of their turn.
         if self._summary_task and not self._summary_task.done():
@@ -211,9 +220,38 @@ class Session:
         self._epoch += 1
         self._stop = threading.Event()
         epoch = self._epoch
-        self._turn_task = asyncio.create_task(self._run_turn(epoch, audio, text, speak))
+        self._turn_task = asyncio.create_task(
+            self._run_turn(epoch, audio, text, speak, echo_risk))
 
     # ── tools ──────────────────────────────────────────────────────────────
+
+    def _is_echo(self, heard: str) -> bool:
+        """Is this transcript just our own speech coming back through the mic?
+
+        Echo cancellation plus a stricter VAD gate stop most of it, but not all —
+        speakers at volume in a hard room still get through, and the failure is
+        loud: the assistant answers itself. This is the last line, and it is only
+        consulted for audio captured while our own voice was actually playing.
+
+        Word overlap rather than exact match, because STT mangles re-recorded
+        audio. Short fragments need near-total overlap so a genuine one-word
+        reply survives; longer ones can be looser, since the odds of the user
+        independently producing eight of our words in a row are slim.
+        """
+        words = _words(heard)
+        if not words:
+            return True                      # nothing intelligible; not worth a turn
+        spoken = set()
+        for clause in self._spoken_log:
+            spoken.update(_words(clause))
+        if not spoken:
+            return False
+        overlap = sum(1 for w in words if w in spoken) / len(words)
+        threshold = 0.9 if len(words) <= 3 else 0.65
+        if overlap >= threshold:
+            print(f"[stt] echo overlap {overlap:.2f} of {len(words)} words", flush=True)
+            return True
+        return False
 
     async def _run_tool(self, call: dict, say=None) -> dict:
         """Normalize, hand to the app, and wait briefly for the real outcome so
@@ -292,13 +330,18 @@ class Session:
     # ── the turn ───────────────────────────────────────────────────────────
 
     async def _run_turn(self, epoch: int, audio: Optional[np.ndarray],
-                        text: Optional[str], speak: bool = True) -> None:
+                        text: Optional[str], speak: bool = True,
+                        echo_risk: bool = False) -> None:
         from_voice = text is None
         do_speak = from_voice or speak       # voice turns always speak
         if from_voice:
             await self._send_control(P.encode("state", value="thinking"))
             text = await asyncio.to_thread(self._stt.transcribe, audio)
             print(f"[stt] -> {text!r}", flush=True)
+            if echo_risk and self._is_echo(text):
+                print("[stt] discarded: it's our own voice", flush=True)
+                await self._send_control(P.encode("state", value="idle"))
+                return
         if not self._live(epoch) or not text.strip():
             return
         if from_voice:  # let the UI show what was heard
@@ -328,6 +371,7 @@ class Session:
             await self._send_audio(P.pack_audio(turn, seq, pcm))
             now = time.monotonic()
             self._audio_until = max(now, self._audio_until) + len(pcm) / 24000.0
+            self._spoken_log.append(clause)
             seq += 1
             spoken += clause + " "
 

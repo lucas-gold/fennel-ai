@@ -3,13 +3,13 @@
 <plist version="1.0">
 <dict>
     <key>CFBundleName</key>
-    <string>my_ai</string>
+    <string>Fennel</string>
     <key>CFBundleDisplayName</key>
-    <string>my_ai</string>
+    <string>Fennel</string>
     <key>CFBundleExecutable</key>
-    <string>MyAI</string>
+    <string>Fennel</string>
     <key>CFBundleIdentifier</key>
-    <string>com.lucas.myai</string>
+    <string>garden.fennel.app</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
@@ -18,23 +18,25 @@
     <string>1</string>
     <key>LSMinimumSystemVersion</key>
     <string>14.0</string>
+    <key>CFBundleIconFile</key>
+    <string>Fennel</string>
     <key>NSHighResolutionCapable</key>
     <true/>
     <key>NSPrincipalClass</key>
     <string>NSApplication</string>
     <!-- Voice: required or the app crashes when requesting the mic. -->
     <key>NSMicrophoneUsageDescription</key>
-    <string>my_ai listens to your voice to chat with you, entirely on your Mac.</string>
+    <string>Fennel listens to your voice to chat with you, entirely on your Mac.</string>
     <!-- EventKit (Stage 3): reminders + calendar the assistant writes to. -->
     <key>NSRemindersUsageDescription</key>
-    <string>my_ai adds reminders you ask it to create.</string>
+    <string>Fennel adds reminders you ask it to create.</string>
     <key>NSCalendarsUsageDescription</key>
-    <string>my_ai adds calendar events you ask it to create.</string>
+    <string>Fennel adds calendar events you ask it to create.</string>
     <!-- macOS 14+ requestFullAccessTo… reads these keys, not the legacy ones
          above; without them the request crashes the app. -->
     <key>NSRemindersFullAccessUsageDescription</key>
-    <string>my_ai adds reminders you ask it to create.</string>
+    <string>Fennel adds reminders you ask it to create.</string>
     <key>NSCalendarsFullAccessUsageDescription</key>
-    <string>my_ai adds calendar events you ask it to create.</string>
+    <string>Fennel adds calendar events you ask it to create.</string>
 </dict>
 </plist>

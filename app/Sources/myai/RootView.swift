@@ -31,7 +31,8 @@ private struct HomePanel: View {
 
     private var header: some View {
         HStack(spacing: 6) {
-            Text("my_ai").font(Theme.title(15, .bold))
+            FennelLogo(size: 17).foregroundStyle(Theme.accent)
+            Text("Fennel").font(Theme.title(15, .bold))
             Circle()
                 .fill(chat.connected ? Color.green : Color.orange)
                 .frame(width: 6, height: 6)
@@ -171,7 +172,7 @@ private struct SettingsMenu: View {
             VStack(alignment: .leading, spacing: 14) {
                 VStack(alignment: .leading, spacing: 3) {
                     Text("Network").font(Theme.title(14, .semibold))
-                    Text("Off by default. Everything else runs on this Mac.")
+                    Text("Off by default. Everything else in Fennel runs on this Mac.")
                         .font(.system(size: 11)).foregroundStyle(.secondary)
                 }
 
