@@ -226,6 +226,7 @@ final class ChatModel: ObservableObject {
         else { return }
 
         withAnimation(.easeOut(duration: 0.18)) { cards.insert(card, at: 0) }
+        if card.kind == .timer { startTimer(card) }
 
         Task {
             do {
@@ -286,6 +287,20 @@ final class ChatModel: ObservableObject {
             return (nil, nil, [])
         case .panel, .fact, .song, .timer, .link, .search:
             return (nil, nil, [])       // the card itself is the whole effect
+        }
+    }
+
+    /// Fire the timer from the model, not the countdown view: the card lives in
+    /// a LazyVStack and may not be rendered when it runs out, and a timer that
+    /// only goes off while you happen to be looking at it is not a timer.
+    private func startTimer(_ card: HomeCard) {
+        guard let ends = card.endsAt else { return }
+        Task {
+            let delay = ends.timeIntervalSinceNow
+            if delay > 0 { try? await Task.sleep(for: .seconds(delay)) }
+            guard cards.contains(where: { $0.id == card.id }) else { return }  // dismissed
+            NSSound.beep()
+            NSApp.requestUserAttention(.criticalRequest)   // bounce the Dock icon
         }
     }
 

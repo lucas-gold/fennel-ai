@@ -21,7 +21,11 @@ enum EventKitBridge {
         let f = DateFormatter()
         f.locale = Locale(identifier: "en_US_POSIX")
         f.timeZone = .current
-        for format in ["yyyy-MM-dd'T'HH:mm:ss", "yyyy-MM-dd'T'HH:mm"] {
+        // Fractional seconds first: Python's isoformat() includes microseconds
+        // unless explicitly stripped, and a parser that only accepts whole
+        // seconds fails silently, which is worse than loudly.
+        for format in ["yyyy-MM-dd'T'HH:mm:ss.SSSSSS", "yyyy-MM-dd'T'HH:mm:ss.SSS",
+                       "yyyy-MM-dd'T'HH:mm:ss", "yyyy-MM-dd'T'HH:mm"] {
             f.dateFormat = format
             if let d = f.date(from: s) { return d }
         }
