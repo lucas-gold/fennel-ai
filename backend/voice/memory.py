@@ -141,8 +141,20 @@ class Memory:
             rows = rows[-keep:]
         # Replay what the model actually produced, tool calls included — not the
         # cleaned-up text the UI shows.
-        return [{"role": r["role"], "content": r.get("prompt_text") or r["content"]}
-                for r in rows]
+        out: list[Message] = []
+        for r in rows:
+            text = r.get("prompt_text")
+            if text is None:
+                # Written before D-REPLAY: the stored assistant text is the
+                # laundered reply with its tool call stripped out, so replaying
+                # it verbatim is a worked example of narrating an action instead
+                # of taking one. Measured on a real conversation: 16 such
+                # messages was enough to stop tool calling completely, while the
+                # same turn with these elided called the tool. The user still
+                # sees the original text in the chat; only the replay changes.
+                text = "(earlier reply)" if r["role"] == "assistant" else r["content"]
+            out.append({"role": r["role"], "content": text})
+        return out
 
     def needs_summary(self, session_id: int) -> bool:
         rows = self._store.messages(session_id)
