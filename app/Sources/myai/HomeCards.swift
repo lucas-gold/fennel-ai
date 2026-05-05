@@ -265,19 +265,17 @@ struct HomeCardView: View {
     /// ticking counter, so it stays right even if the app was busy or asleep.
     private struct CountdownLabel: View {
         let ends: Date
-        @State private var chimed = false
 
+        // Display only — ChatModel.startTimer owns the chime, because this view
+        // lives in a LazyVStack and may not exist when the timer runs out.
         var body: some View {
             TimelineView(.periodic(from: .now, by: 1)) { ctx in
                 let left = Int(ends.timeIntervalSince(ctx.date).rounded(.up))
                 Text(left > 0
                      ? String(format: "%d:%02d", left / 60, left % 60)
                      : "Time's up")
-                    .font(.title3.monospacedDigit().weight(.medium))
+                    .font(.system(size: 19, weight: .medium, design: .rounded).monospacedDigit())
                     .foregroundStyle(left > 0 ? Color.primary : Color.red)
-                    .onChange(of: left <= 0) { _, done in
-                        if done && !chimed { chimed = true; NSSound.beep() }
-                    }
             }
             .padding(.top, 2)
         }

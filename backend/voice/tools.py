@@ -31,7 +31,10 @@ TOOLS: list[dict] = [
                 "actually ask to be reminded, or ask you to add a task. If they "
                 "merely mention something they ought to do, just talk with them "
                 "— do not create a reminder and do not offer one. Never invent a "
-                "time they did not give: leave `due` out instead."
+                "time they did not give: leave `due` out instead. macOS has no "
+                "alarm clock you can set, so treat a request for an alarm as a "
+                "reminder at that time — it fires a notification — and say that "
+                "is what you set."
             ),
             "parameters": {
                 "type": "object",
@@ -474,7 +477,10 @@ def normalize(name: str, args: dict) -> tuple[dict, dict]:
         if not 0 < minutes <= 24 * 60:
             return {}, {"ok": False, "error": "minutes must be between 0 and 1440"}
         label = str(args.get("label", "")).strip() or "Timer"
-        ends = datetime.now() + timedelta(minutes=minutes)
+        # Whole seconds only: isoformat() otherwise emits microseconds, which the
+        # app's date parser rejected outright — the card appeared with no
+        # countdown behind it.
+        ends = (datetime.now() + timedelta(minutes=minutes)).replace(microsecond=0)
         card = {"label": label, "minutes": minutes, "ends": ends.isoformat()}
         pretty = (f"{int(minutes)} min" if minutes == int(minutes)
                   else f"{minutes:g} min")

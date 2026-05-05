@@ -523,3 +523,29 @@ poisoned; it cannot rescue one that already is. Those have to be abandoned.
 That asymmetry is the part worth remembering: a context bug that writes to
 durable storage is not a bug you can simply fix, because the corrupted data keeps
 teaching after the code is correct.
+
+---
+
+## D-TIMER — A silent parse failure, and why the chime moved out of the view
+
+The timer card rendered its label and then did nothing. Two causes, both worth
+recording because both are the quiet kind.
+
+**Python's `isoformat()` includes microseconds.** The backend sent
+`2026-08-25T00:33:16.995174`; the app's `parseDate` only accepted whole seconds,
+returned nil, and the countdown was simply never built. Nothing logged, nothing
+threw — the card just looked inert. Fixed at both ends: the backend truncates to
+whole seconds, and the parser accepts fractional ones anyway. A parser that
+fails silently on a format its own producer emits is a bug waiting for someone
+to notice.
+
+**The chime lived in the countdown view.** Cards sit in a `LazyVStack`, so the
+view may not exist when the timer expires — a timer that only goes off while you
+happen to be looking at it is not a timer. `ChatModel.startTimer` now owns it:
+sleep until the deadline, then beep and bounce the Dock icon, regardless of what
+is on screen. The view is display only.
+
+**Alarms are not possible.** macOS exposes no alarm-clock API to third-party
+apps, and Clock.app is not scriptable for it. A request for an alarm is handled
+as a reminder at that time, which does fire a notification (`EKAlarm`), and the
+model is told to say that is what it set rather than claim an alarm.
