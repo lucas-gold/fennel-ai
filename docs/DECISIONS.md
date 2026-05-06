@@ -549,3 +549,51 @@ is on screen. The view is display only.
 apps, and Clock.app is not scriptable for it. A request for an alarm is handled
 as a reminder at that time, which does fire a notification (`EKAlarm`), and the
 model is told to say that is what it set rather than claim an alarm.
+
+---
+
+## D-ECHO — Three layers, because acoustics don't respect any single one
+
+The assistant kept answering itself. There are now three defences, deliberately
+independent, because each one fails differently:
+
+1. **Voice-processing AEC** (D6) cancels most of the speaker feed at the driver.
+2. **A stricter VAD gate** (D-DUPLEX) requires sustained high-confidence speech
+   while our own audio is audible, so residual leakage doesn't trip barge-in.
+3. **A transcript check** — the new one. If a turn was captured while we were
+   speaking, its transcript is compared against what we actually said; if it is
+   mostly our own words, the turn is discarded before it reaches the LLM.
+
+The third exists because the first two are acoustic and probabilistic, while
+this one is semantic and nearly free: we know exactly what we sent to TTS. Word
+overlap rather than exact match, because STT mangles re-recorded audio, and the
+bar scales with length — a three-word fragment needs ~total overlap so a genuine
+one-word reply survives, while longer transcripts can be looser, since the user
+is unlikely to independently produce eight of our words in a row. Verified
+against eight cases including "mom" (ours, dropped) and "thanks" (not ours,
+kept).
+
+It only runs for audio captured while our voice was actually playing, so normal
+conversation is never second-guessed.
+
+---
+
+## D-NAME — Fennel
+
+The app is **Fennel**; the assistant answers to Fennel; the site is
+**fennel.garden**. One word for the thing you talk to, the longer phrase for the
+place it lives.
+
+Consequences worth recording:
+
+- Bundle id moved to `garden.fennel.app`, which macOS treats as a **new app** —
+  microphone, Reminders and Calendar permissions are re-requested once.
+- The data directory moved to `~/Library/Application Support/Fennel`. `Store`
+  adopts a pre-rename database on first run, WAL sidecars included, rather than
+  silently starting empty.
+- The logomark is a SwiftUI `Shape`, not an asset, and `scripts/make-icon.swift`
+  renders the `.icns` from the same geometry — one source of truth, so the icon
+  can't drift from the in-app mark.
+- Naming the assistant in the persona string was not enough: buried in a
+  ~2100-token system block, the model invented its own name. It needed to be the
+  first sentence, with an explicit "never invent another name."

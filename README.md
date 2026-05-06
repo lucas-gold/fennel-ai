@@ -1,4 +1,4 @@
-# my_ai
+# Fennel
 
 A local speech-to-speech companion for Apple Silicon Macs. Text or voice,
 running entirely on-device. No API key, no account, no network after the

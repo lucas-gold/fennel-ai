@@ -1,11 +1,11 @@
 import SwiftUI
 
 @main
-struct MyAIApp: App {
+struct FennelApp: App {
     @StateObject private var chat = ChatModel()
 
     var body: some Scene {
-        WindowGroup("my_ai") {
+        WindowGroup("Fennel") {
             RootView()
                 .environmentObject(chat)
                 // 320 sidebar + 460 chat minimum, so the split never fights itself.
