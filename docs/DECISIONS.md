@@ -597,3 +597,33 @@ Consequences worth recording:
 - Naming the assistant in the persona string was not enough: buried in a
   ~2100-token system block, the model invented its own name. It needed to be the
   first sentence, with an explicit "never invent another name."
+
+---
+
+## D-MIGRATE — I deleted the user's database. What went wrong, and the rule.
+
+The rename to Fennel shipped with a migration that carried the old database to
+the new location. It destroyed the data instead. Both mistakes are mine and both
+are the ordinary kind:
+
+**1. It moved instead of copying.** `os.replace` on the legacy file, so there was
+no fallback the moment anything downstream went wrong.
+
+**2. It was aimed by a mutable global.** The trigger was `path == DB_PATH`. Test
+harnesses reassign `voice.store.DB_PATH` to a scratch file precisely so they
+never touch real data — which meant the condition became true *for the scratch
+path*, the migration fired into it, and the real database was moved there. The
+scratch file was then deleted in routine cleanup, along with the user's ~97
+messages, facts and settings. No Time Machine, no local snapshots, no copy.
+
+The bitter part: the `DB_PATH` indirection existed specifically to keep tests off
+the real database. It is what pointed the loaded gun at it.
+
+Two rules, both now enforced in `_adopt_legacy`:
+
+- **A migration copies. It never moves.** The original costs a few megabytes and
+  buys a second chance. Use sqlite3's `backup()` so the WAL is checkpointed in.
+- **Never let a destructive path be chosen by something tests are expected to
+  reassign.** The real location is frozen in `_REAL_DB` at import; the migration
+  compares against that and no-ops for every other path. There is a regression
+  test for exactly this: pointing `DB_PATH` at a scratch file must not adopt.
