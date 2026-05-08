@@ -22,7 +22,7 @@ from voice.memory import Memory
 from voice.session import Session
 from voice.store import Store
 from voice.stt import WhisperSTT
-from voice.tools import system_prompt
+from voice.tools import system_prompt, tool_list
 from voice.tts import KokoroTTS
 
 _stt: WhisperSTT
@@ -55,6 +55,10 @@ def _current_system() -> str:
     return _system
 
 
+def _feature_settings() -> dict[str, bool]:
+    return {"web_search": _store.setting("web_search", "0") == "1"}
+
+
 async def _refresh_briefing(session: Session) -> None:
     """Fetch today's briefing and fold it into the primed prefix.
 
@@ -65,13 +69,18 @@ async def _refresh_briefing(session: Session) -> None:
     global _system, _system_day
     if _briefing.is_stale():
         await asyncio.to_thread(_briefing.build, embed.shared())
+    _llm.tools = tool_list(_feature_settings())
     # Re-prime whenever the prefix we *want* differs from the one that's primed,
     # not merely when the fetch was stale: toggling "daily updates" on mid-run
     # leaves a perfectly fresh briefing sitting outside the prefix otherwise.
     want = _build_system()
-    if want == _system:
+    want_tools = tool_list(_feature_settings())
+    if want == _system and want_tools == _llm.tools:
         return
     _system, _system_day = want, date.today()
+    # Tool availability lives in the primed prefix, so switching a feature on or
+    # off means re-priming — the same path the daily briefing already takes.
+    _llm.tools = want_tools
     # Hand the session the new prefix BEFORE priming. A turn arriving during the
     # prime blocks on the LLM lock either way, but this way it wakes up using the
     # new prefix on a warm cache rather than the stale one.
@@ -159,6 +168,7 @@ async def main() -> None:
     # The on-connect refresh then only fires when the day rolls over mid-run.
     if _briefing.is_stale():
         await asyncio.to_thread(_briefing.build, embed.shared())
+    _llm.tools = tool_list(_feature_settings())
     # Prefill tool schemas + day table + briefing now rather than during the
     # user's first sentence — ~1600-2200 tokens of stable prefix (D4).
     _system, _system_day = _build_system(), date.today()

@@ -8,27 +8,47 @@ let iconset = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponen
 try? FileManager.default.removeItem(at: iconset)
 try FileManager.default.createDirectory(at: iconset, withIntermediateDirectories: true)
 
-func markPath(_ side: CGFloat) -> NSBezierPath {
+// Same geometry as FennelMark.swift — squat ribbed bulb, feathery spray.
+// Grouped by stroke weight, because the parts are not drawn at the same weight.
+func markPaths(_ side: CGFloat) -> [(NSBezierPath, CGFloat)] {
     let s = side / 120
     func p(_ x: CGFloat, _ y: CGFloat) -> NSPoint { NSPoint(x: x * s, y: side - y * s) }
-    let path = NSBezierPath()
-    path.move(to: p(53, 62))
-    path.curve(to: p(38, 85), controlPoint1: p(45, 66), controlPoint2: p(38, 74))
-    path.curve(to: p(60, 106), controlPoint1: p(38, 97), controlPoint2: p(47, 106))
-    path.curve(to: p(82, 85), controlPoint1: p(73, 106), controlPoint2: p(82, 97))
-    path.curve(to: p(67, 62), controlPoint1: p(82, 74), controlPoint2: p(75, 66))
-    path.move(to: p(60, 62)); path.line(to: p(60, 28))
-    path.move(to: p(53, 62))
-    path.curve(to: p(34, 32), controlPoint1: p(49, 52), controlPoint2: p(42, 41))
-    path.move(to: p(67, 62))
-    path.curve(to: p(86, 32), controlPoint1: p(71, 52), controlPoint2: p(78, 41))
-    for e in [(50.0, 20.0), (60.0, 14.0), (70.0, 20.0)] {
-        path.move(to: p(60, 28)); path.line(to: p(e.0, e.1))
+
+    let bulb = NSBezierPath()
+    bulb.move(to: p(30, 86))
+    bulb.curve(to: p(60, 106), controlPoint1: p(30, 98), controlPoint2: p(43, 106))
+    bulb.curve(to: p(90, 86), controlPoint1: p(77, 106), controlPoint2: p(90, 98))
+    bulb.curve(to: p(60, 68), controlPoint1: p(90, 74), controlPoint2: p(78, 68))
+    bulb.curve(to: p(30, 86), controlPoint1: p(42, 68), controlPoint2: p(30, 74))
+    bulb.close()
+
+    let ribs = NSBezierPath()
+    ribs.move(to: p(47, 70))
+    ribs.curve(to: p(48, 104), controlPoint1: p(44, 80), controlPoint2: p(44, 95))
+    ribs.move(to: p(60, 68)); ribs.line(to: p(60, 106))
+    ribs.move(to: p(73, 70))
+    ribs.curve(to: p(72, 104), controlPoint1: p(76, 80), controlPoint2: p(76, 95))
+
+    let sprig = NSBezierPath()
+    sprig.move(to: p(58, 68))
+    sprig.curve(to: p(61, 48), controlPoint1: p(57, 60), controlPoint2: p(58, 54))
+    let fan: [(NSPoint, NSPoint, NSPoint)] = [
+        (p(52, 44), p(42, 44), p(34, 48)),
+        (p(55, 38), p(48, 32), p(39, 28)),
+        (p(60, 37), p(62, 27), p(66, 19)),
+        (p(68, 39), p(77, 34), p(86, 32)),
+        (p(70, 46), p(80, 48), p(87, 53)),
+    ]
+    for (c1, c2, end) in fan {
+        sprig.move(to: p(61, 48))
+        sprig.curve(to: end, controlPoint1: c1, controlPoint2: c2)
     }
-    path.lineWidth = 6.5 * s
-    path.lineCapStyle = .round
-    path.lineJoinStyle = .round
-    return path
+
+    for path in [bulb, ribs, sprig] {
+        path.lineCapStyle = .round
+        path.lineJoinStyle = .round
+    }
+    return [(bulb, 6.5 * s), (ribs, 4.0 * s), (sprig, 4.2 * s)]
 }
 
 func render(_ side: Int) -> Data {
@@ -45,11 +65,13 @@ func render(_ side: Int) -> Data {
                               ending: NSColor(srgbRed: 0.67, green: 0.40, blue: 0.95, alpha: 1))!
     gradient.draw(in: tile, angle: -45)
     NSColor.white.setStroke()
-    let scaled = markPath(px * 0.78)
     let shift = NSAffineTransform()
     shift.translateX(by: px * 0.11, yBy: px * 0.11)
-    scaled.transform(using: shift as AffineTransform)
-    scaled.stroke()
+    for (path, width) in markPaths(px * 0.78) {
+        path.transform(using: shift as AffineTransform)
+        path.lineWidth = width
+        path.stroke()
+    }
     image.unlockFocus()
     let tiff = image.tiffRepresentation!
     return NSBitmapImageRep(data: tiff)!.representation(using: .png, properties: [:])!
