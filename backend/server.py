@@ -163,7 +163,7 @@ async def main() -> None:
     # user's first sentence — ~1600-2200 tokens of stable prefix (D4).
     _system, _system_day = _build_system(), date.today()
     await asyncio.to_thread(_llm.prime, _system)
-    print(f"my_ai backend listening on ws://{config.HOST}:{config.PORT}  "
+    print(f"Fennel backend listening on ws://{config.HOST}:{config.PORT}  "
           f"(tier={config.TIER})", flush=True)
     async with websockets.serve(handler, config.HOST, config.PORT, max_size=None):
         await asyncio.Future()
