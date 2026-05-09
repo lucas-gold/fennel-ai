@@ -14,6 +14,7 @@ from typing import AsyncIterator, Iterator, Optional
 
 import mlx.core as mx
 from mlx_lm import load, stream_generate
+from mlx_lm.sample_utils import make_sampler
 from mlx_lm.models.cache import make_prompt_cache, trim_prompt_cache
 
 import config
@@ -40,6 +41,7 @@ class LLM:
         # Which tools to advertise. Optional ones come and go with the user's
         # settings, and changing them changes the primed prefix.
         self.tools = list(TOOLS)
+        self._sampler = make_sampler(temp=config.LLM_TEMP, top_p=config.LLM_TOP_P)
         # One model, one KV cache, several worker threads (generation, background
         # summarising, re-priming when the daily briefing lands). Running two of
         # those at once crashes MLX natively — no Python traceback, the process
@@ -102,7 +104,8 @@ class LLM:
         with self._lock:
             cache = make_prompt_cache(self.model)
             for resp in stream_generate(self.model, self.tokenizer, prompt=prompt,
-                                        max_tokens=max_tokens, prompt_cache=cache):
+                                        max_tokens=max_tokens, prompt_cache=cache,
+                                        sampler=self._sampler):
                 if resp.text:
                     out.append(resp.text)
         return "".join(out).strip()
@@ -180,6 +183,7 @@ class LLM:
                 for resp in stream_generate(
                     self.model, self.tokenizer, prompt=delta,
                     max_tokens=config.LLM_MAX_TOKENS, prompt_cache=self._cache,
+                    sampler=self._sampler,
                 ):
                     generated.append(resp.token)
                     if resp.text:
