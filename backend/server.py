@@ -104,7 +104,8 @@ async def handler(ws) -> None:
     # writes those stale defaults back over the real ones.
     await ws.send(P.encode("settings", daily_updates=_briefing.enabled,
                            location=_briefing.place,
-                           web_search=_store.setting("web_search", "0") == "1"))
+                           web_search=_store.setting("web_search", "0") == "1",
+                           models=config.local_models()))
     await session.open_session()          # resume where the user left off
     asyncio.create_task(_refresh_briefing(session))  # never blocks the conversation
     try:
@@ -129,7 +130,8 @@ async def handler(ws) -> None:
                     await ws.send(P.encode(
                         "settings", daily_updates=_briefing.enabled,
                         location=_briefing.place,
-                        web_search=_store.setting("web_search", "0") == "1"))
+                        web_search=_store.setting("web_search", "0") == "1",
+                        models=config.local_models()))
                 elif msg["type"] == "session_list":
                     await session.send_sessions()
                 elif msg["type"] == "session_open":

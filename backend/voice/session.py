@@ -45,6 +45,10 @@ LEAD_INS = {
     "agenda": "Let me check.",
 }
 
+# Unicode symbol/pictograph ranges plus the joiners that compose them.
+_EMOJI = re.compile("[\U0001F300-\U0001FAFF\u2600-\u27BF\uFE0F\u200D]")
+
+
 def _words(text: str) -> list[str]:
     return re.findall(r"[a-z0-9']+", text.lower())
 
@@ -88,6 +92,11 @@ class Session:
         self._audio_until = 0.0
         # What we recently said out loud, for the echo check below.
         self._spoken_log: deque = deque(maxlen=40)
+        # Emoji rationing. Asking the model for "occasionally" doesn't work: at
+        # "almost never" it used none at all, at "occasionally" it put one in
+        # every single reply. The middle the user actually wants is a rule, not
+        # an adverb — at most one per reply, and never twice running.
+        self._last_reply_had_emoji = False
         self._rx = 0  # mic frames received (debug)
 
         # Tool calls awaiting the app's real-world result, keyed by call id.
@@ -394,6 +403,17 @@ class Session:
                     return " " + prose
                 return prose
 
+            emoji_used = False
+
+            def ration_emoji(prose: str) -> str:
+                nonlocal emoji_used
+                if not _EMOJI.search(prose):
+                    return prose
+                if emoji_used or self._last_reply_had_emoji:
+                    return _EMOJI.sub("", prose).replace("  ", " ")
+                emoji_used = True
+                return prose
+
             async def lead_in(text: str) -> None:
                 """Speak a holding line for a slow tool — but only if the model
                 hasn't already said something itself, or they stack up."""
@@ -414,7 +434,7 @@ class Session:
                     c["result"] = await self._run_tool(c, say=lead_in)
                 if not prose:
                     continue
-                prose = space(prose)
+                prose = space(ration_emoji(prose))
                 said += prose
                 await self._send_control(P.encode("token", turn=turn, text=prose))
                 if do_speak:
@@ -428,12 +448,13 @@ class Session:
                     c["result"] = await self._run_tool(c, say=lead_in)
                 calls += new_calls
                 if prose:
-                    prose = space(prose)
+                    prose = space(ration_emoji(prose))
                     said += prose
                     await self._send_control(P.encode("token", turn=turn, text=prose))
                     splitter.feed(prose)
                 if do_speak:
                     await speak_clause(splitter.flush())
+            self._last_reply_had_emoji = emoji_used
             return ts.raw, calls, said
 
         self._assistant_active = do_speak

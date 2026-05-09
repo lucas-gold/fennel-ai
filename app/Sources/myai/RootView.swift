@@ -170,10 +170,16 @@ private struct SettingsMenu: View {
                    help: "Network settings", active: online) { open.toggle() }
         .popover(isPresented: $open, arrowEdge: .bottom) {
             VStack(alignment: .leading, spacing: 14) {
-                VStack(alignment: .leading, spacing: 3) {
+                VStack(alignment: .leading, spacing: 4) {
                     Text("Network").font(Theme.title(14, .semibold))
-                    Text("Off by default. Everything else in Fennel runs on this Mac.")
+                    Text("Everything else in Fennel runs on this Mac.")
                         .font(.system(size: 11)).foregroundStyle(.secondary)
+                    if !chat.localModels.isEmpty {
+                        Text(chat.localModels)
+                            .font(.system(size: 10).monospaced())
+                            .foregroundStyle(.tertiary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                 }
 
                 Divider()
