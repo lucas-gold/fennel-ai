@@ -627,3 +627,27 @@ Two rules, both now enforced in `_adopt_legacy`:
   reassign.** The real location is frozen in `_REAL_DB` at import; the migration
   compares against that and no-ops for every other path. There is a regression
   test for exactly this: pointing `DB_PATH` at a scratch file must not adopt.
+
+---
+
+## D-MARK — The logo, and why simplifying it made it worse
+
+The first mark read as a Venus symbol: a round bulb, one straight central stem,
+symmetric arms. Three changes fixed it, and the third was a surprise:
+
+1. **The bulb is wider than tall.** Fennel is squat with a flat base; a circle on
+   a stem is a symbol, an ovoid is a vegetable.
+2. **Ribs inside the bulb.** The overlapping sheaths are what make it fennel
+   rather than an onion, and they survive down to 32 px.
+3. **Several fronds, not one stalk.** A "simplified for small sizes" variant —
+   one stalk, one crossing frond — tested *worse* at 32 px than the detailed
+   one: stripping the fronds collapsed it straight back into a symbol.
+   Multiplicity is what reads as a plant, so there is no simplified variant.
+
+Rendered and inspected at 512, 64, 32 and 16 px rather than judged at design
+size, which is the only way point 3 shows up. At 16 px it mushes, as any
+detailed mark does, but the silhouette still reads as a plant in a pot.
+
+The mark lives in `FennelMark.swift` as `Shape`s grouped by stroke weight, and
+`scripts/make-icon.swift` builds the `.icns` from the same coordinates — one
+source of truth, so the icon can never drift from what the app draws.

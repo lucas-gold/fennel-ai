@@ -318,6 +318,19 @@ TOOLS: list[dict] = [
 
 TOOL_NAMES = {t["function"]["name"] for t in TOOLS}
 
+# Tools gated behind a setting. A disabled tool is REMOVED from the list rather
+# than left in to refuse: a refusal ("I can't access Wikipedia directly") gets
+# stored like any other reply, and then teaches refusal even after the user
+# enables it — which is exactly what happened. If it isn't offered, it can't be
+# tried, so nothing teachable is recorded.
+OPTIONAL_TOOLS = {"search_web": "web_search"}
+
+
+def tool_list(settings: dict[str, bool]) -> list[dict]:
+    """The tools to advertise, given which optional features are switched on."""
+    return [t for t in TOOLS
+            if settings.get(OPTIONAL_TOOLS.get(t["function"]["name"], ""), True)]
+
 # Tools whose *result* is the answer, not a confirmation. The turn must always
 # run another LLM round after these, even if the model already said something —
 # skipping it (which is right for side-effecting tools) leaves the user with

@@ -181,7 +181,7 @@ private struct SettingsMenu: View {
                 toggleRow("Daily updates", isOn: Binding(
                     get: { chat.dailyUpdates },
                     set: { chat.dailyUpdates = $0; chat.saveSettings() }),
-                    note: "Weather and headlines, once a day, from a fixed list of sources.")
+                    note: "Once a day, Fennel fetches headlines from BBC World, NPR and Ars Technica, plus your local forecast from Open-Meteo. It sends no information about you.")
 
                 HStack(spacing: 6) {
                     TextField("City for weather", text: $chat.location)
@@ -194,7 +194,7 @@ private struct SettingsMenu: View {
                 .disabled(!chat.dailyUpdates)
 
                 if chat.dailyUpdates && chat.location.isEmpty {
-                    Label("Add a city or you'll get headlines but no weather.",
+                    Label("Enter your city to get a daily forecast from Open-Meteo.",
                           systemImage: "exclamationmark.circle.fill")
                         .font(.system(size: 10)).foregroundStyle(.orange)
                 }
@@ -204,7 +204,7 @@ private struct SettingsMenu: View {
                 toggleRow("Look things up on Wikipedia", isOn: Binding(
                     get: { chat.webSearch },
                     set: { chat.webSearch = $0; chat.saveSettings() }),
-                    note: "Unlike daily updates, this sends your question out.")
+                    note: "Lets Fennel query Wikipedia's API when it doesn't know something or may be out of date. Your search terms are sent to Wikipedia; nothing else is.")
             }
             .padding(16)
             .frame(width: 320)

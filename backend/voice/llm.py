@@ -37,6 +37,9 @@ class LLM:
         self._cache = make_prompt_cache(self.model)
         self._cached_ids: list[int] = []
         self._prime_len = 0
+        # Which tools to advertise. Optional ones come and go with the user's
+        # settings, and changing them changes the primed prefix.
+        self.tools = list(TOOLS)
         # One model, one KV cache, several worker threads (generation, background
         # summarising, re-priming when the daily briefing lands). Running two of
         # those at once crashes MLX natively — no Python traceback, the process
@@ -70,7 +73,7 @@ class LLM:
                                   {"role": "user", "content": "hi"}])
         sys_only = list(self.tokenizer.apply_chat_template(
             [{"role": "system", "content": system}],
-            add_generation_prompt=False, tokenize=True, tools=TOOLS))
+            add_generation_prompt=False, tokenize=True, tools=self.tools))
         n = _common_prefix(sys_only, probe)
 
         with self._lock:
@@ -116,7 +119,8 @@ class LLM:
         # so tool-calling costs one prefill per session, not one per turn (D4).
         return list(
             self.tokenizer.apply_chat_template(
-                messages, add_generation_prompt=generation, tokenize=True, tools=TOOLS
+                messages, add_generation_prompt=generation, tokenize=True,
+                tools=self.tools
             )
         )
 
