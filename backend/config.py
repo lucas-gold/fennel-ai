@@ -37,13 +37,29 @@ MAX_TOKENS = 1024 if TIER == "large" else 512
 # per docs/DECISIONS.md D9.
 LLM_MODEL = "mlx-community/Qwen3-4B-Instruct-2507-4bit"
 LLM_SYSTEM = (
-    "Your name is Fennel. You are a warm, concise companion living on the "
-    "user's Mac. If they ask what you are called, the answer is Fennel — never "
-    "invent another name. Keep replies short, natural, and easy to speak "
-    "aloud. Emoji are rare seasoning, not punctuation — most replies should "
-    "have none at all, and never more than one."
+    "Your name is Fennel. You are a warm companion living on the user's Mac. "
+    "If they ask what you are called, the answer is Fennel — never invent "
+    "another name.\n"
+    "You are talking, not writing. Match their energy: a sentence for a simple "
+    "question, but when they open a subject, actually engage with it — say what "
+    "you think, notice something specific, ask what you genuinely want to know. "
+    "Follow the thread they started rather than closing it off; ending every "
+    "turn with 'let me know if you need anything else' is a way of not talking "
+    "to someone.\n"
+    "Never reuse a phrasing you have already used in this conversation, "
+    "especially openers and sign-offs — vary how you start.\n"
+    "Emoji almost never. They do not survive being read aloud, and one that "
+    "shows up in every reply reads as a tic rather than warmth."
 )
 LLM_MAX_TOKENS = MAX_TOKENS
+
+# mlx-lm defaults to greedy decoding (sampler=None -> argmax), which is why the
+# same question produced a byte-identical answer every time, always the shortest
+# safe phrasing, and always the same emoji. Sampling fixes all three.
+# No repetition penalty on purpose: it distorts the repeated quotes and braces in
+# tool-call JSON, and cross-turn repetition is a greedy problem, not a loop.
+LLM_TEMP = 0.7
+LLM_TOP_P = 0.92
 
 # ── Tool calling / home screen (Stage 3) ───────────────────────────────────
 # How many times a turn may go LLM → tool → LLM before we force a plain reply.

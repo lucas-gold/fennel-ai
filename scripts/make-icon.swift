@@ -23,32 +23,33 @@ func markPaths(_ side: CGFloat) -> [(NSBezierPath, CGFloat)] {
     bulb.close()
 
     let ribs = NSBezierPath()
-    ribs.move(to: p(47, 70))
-    ribs.curve(to: p(48, 104), controlPoint1: p(44, 80), controlPoint2: p(44, 95))
-    ribs.move(to: p(60, 68)); ribs.line(to: p(60, 106))
-    ribs.move(to: p(73, 70))
-    ribs.curve(to: p(72, 104), controlPoint1: p(76, 80), controlPoint2: p(76, 95))
+    ribs.move(to: p(50, 69))
+    ribs.curve(to: p(50, 105), controlPoint1: p(46, 80), controlPoint2: p(46, 95))
+    ribs.move(to: p(70, 69))
+    ribs.curve(to: p(70, 105), controlPoint1: p(74, 80), controlPoint2: p(74, 95))
 
-    let sprig = NSBezierPath()
-    sprig.move(to: p(58, 68))
-    sprig.curve(to: p(61, 48), controlPoint1: p(57, 60), controlPoint2: p(58, 54))
+    let stalk = NSBezierPath()
+    stalk.move(to: p(58, 68))
+    stalk.curve(to: p(61, 47), controlPoint1: p(57, 60), controlPoint2: p(58, 54))
+
+    let fronds = NSBezierPath()
     let fan: [(NSPoint, NSPoint, NSPoint)] = [
-        (p(52, 44), p(42, 44), p(34, 48)),
-        (p(55, 38), p(48, 32), p(39, 28)),
-        (p(60, 37), p(62, 27), p(66, 19)),
-        (p(68, 39), p(77, 34), p(86, 32)),
-        (p(70, 46), p(80, 48), p(87, 53)),
+        (p(52, 43), p(42, 43), p(34, 47)),
+        (p(55, 37), p(48, 31), p(39, 27)),
+        (p(60, 36), p(62, 26), p(66, 18)),
+        (p(68, 38), p(77, 33), p(86, 31)),
+        (p(70, 45), p(80, 47), p(87, 52)),
     ]
     for (c1, c2, end) in fan {
-        sprig.move(to: p(61, 48))
-        sprig.curve(to: end, controlPoint1: c1, controlPoint2: c2)
+        fronds.move(to: p(61, 47))
+        fronds.curve(to: end, controlPoint1: c1, controlPoint2: c2)
     }
 
-    for path in [bulb, ribs, sprig] {
+    for path in [bulb, ribs, stalk, fronds] {
         path.lineCapStyle = .round
         path.lineJoinStyle = .round
     }
-    return [(bulb, 6.5 * s), (ribs, 4.0 * s), (sprig, 4.2 * s)]
+    return [(bulb, 6.5 * s), (ribs, 5.5 * s), (stalk, 6.5 * s), (fronds, 4.0 * s)]
 }
 
 func render(_ side: Int) -> Data {

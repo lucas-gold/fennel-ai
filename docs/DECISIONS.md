@@ -651,3 +651,31 @@ detailed mark does, but the silhouette still reads as a plant in a pot.
 The mark lives in `FennelMark.swift` as `Shape`s grouped by stroke weight, and
 `scripts/make-icon.swift` builds the `.icns` from the same coordinates — one
 source of truth, so the icon can never drift from what the app draws.
+
+---
+
+## D-VOICE — It was greedy decoding, not the persona
+
+Three complaints — it repeats itself, it won't open up, it overuses the same
+emoji — turned out to be one cause. `mlx_lm.stream_generate` defaults to
+`sampler=None`, which is **argmax**. Greedy decoding means the same question
+produces a byte-identical answer every time, always the shortest safe phrasing,
+and always the single highest-probability emoji. No amount of persona wording
+fixes an argmax.
+
+`temp=0.7, top_p=0.92`. Deliberately **no repetition penalty**: it distorts the
+repeated quotes and braces in tool-call JSON, and the complaint was cross-turn
+sameness, which is a greedy artefact rather than a within-reply loop.
+
+The risk was that temperature would break tool calls. Measured: 4/4 fired with
+well-formed arguments, and 0 emoji across those four replies. Variety improved
+but is not dramatic — two of three fresh chats still answered "how are you"
+near-identically, because the distribution is genuinely peaked there. Raising
+temperature further trades tool reliability for variety, and tool reliability
+wins.
+
+The persona was rewritten alongside it, but as a smaller lever: "you are
+talking, not writing", follow the thread rather than closing it with "let me
+know if you need anything else", and never reuse an opener. Emoji guidance moved
+from "at most one" to "almost never", with the reason stated — they don't
+survive being read aloud, and one that appears every time reads as a tic.
