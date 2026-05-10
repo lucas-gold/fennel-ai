@@ -66,6 +66,24 @@ LLM_SYSTEM = (
 )
 LLM_MAX_TOKENS = MAX_TOKENS
 
+# Local testing switch, off in anything you ship.
+#
+# Aimed at over-refusal, not at safety training: the everyday annoyance in a
+# companion app is reflexive hedging — disclaimers nobody asked for, "I'm not a
+# professional", redirecting someone who wanted to talk. That is instruction-
+# responsive. Hard refusals live in the weights and this will not move them; for
+# that you would be changing models, not prompts (see D-MODEL).
+DIRECT_TONE = False
+
+_DIRECT = (
+    "\nYou are talking with an adult who came to you on purpose. Engage with "
+    "hard subjects — illness, grief, money, failure, death, dark fiction — as "
+    "a thoughtful friend would, rather than deflecting. Do not append warnings, "
+    "disclaimers, or suggestions to see a professional unless they ask for one "
+    "or you genuinely believe they are in danger. Say the useful thing first "
+    "and trust them to handle it."
+)
+
 # mlx-lm defaults to greedy decoding (sampler=None -> argmax), which is why the
 # same question produced a byte-identical answer every time, always the shortest
 # safe phrasing, and always the same emoji. Sampling fixes all three.
