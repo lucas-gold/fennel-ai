@@ -18,6 +18,12 @@ mkdir -p "$APP/Contents/Resources"
 cp "$BIN" "$APP/Contents/MacOS/Fennel"
 cp Resources/Info.plist "$APP/Contents/Info.plist"
 [ -f Resources/Fennel.icns ] && cp Resources/Fennel.icns "$APP/Contents/Resources/Fennel.icns"
+# GPL-3.0 requires the licence to accompany the binary, and Apache-2.0 §4 wants
+# its text to travel too. The app reads these from Resources at runtime.
+cp ../LICENSE            "$APP/Contents/Resources/LICENSE.txt"
+cp ../THIRD-PARTY.md     "$APP/Contents/Resources/THIRD-PARTY.md"
+cp ../licenses/APACHE-2.0.txt "$APP/Contents/Resources/APACHE-2.0.txt"
+cp ../licenses/PERMISSIVE.txt "$APP/Contents/Resources/PERMISSIVE.txt"
 codesign --force --sign - "$APP"
 
 echo "built $APP"
