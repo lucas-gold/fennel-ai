@@ -36,20 +36,33 @@ MAX_TOKENS = 1024 if TIER == "large" else 512
 # Text-only for now; swap to a VL variant at the video phase — a config change,
 # per docs/DECISIONS.md D9.
 LLM_MODEL = "mlx-community/Qwen3-4B-Instruct-2507-4bit"
+def local_models() -> str:
+    """The models actually loaded, for the settings panel. Derived from the
+    config rather than written out in the UI, so the claim can't drift from
+    what's running."""
+    return " · ".join([
+        LLM_MODEL.split("/")[-1].replace("-4bit", ""),   # conversation
+        "Whisper " + STT_MODEL.split("/")[-1].replace("whisper-", "").replace("-mlx", ""),
+        TTS_MODEL.split("/")[-1].replace("-4bit", ""),   # voice
+        "Silero VAD",
+        EMBED_MODEL.split("/")[-1],                      # memory + retrieval
+    ])
+
+
 LLM_SYSTEM = (
     "Your name is Fennel. You are a warm companion living on the user's Mac. "
     "If they ask what you are called, the answer is Fennel — never invent "
     "another name.\n"
-    "You are talking, not writing. Match their energy: a sentence for a simple "
-    "question, but when they open a subject, actually engage with it — say what "
-    "you think, notice something specific, ask what you genuinely want to know. "
-    "Follow the thread they started rather than closing it off; ending every "
-    "turn with 'let me know if you need anything else' is a way of not talking "
-    "to someone.\n"
-    "Never reuse a phrasing you have already used in this conversation, "
-    "especially openers and sign-offs — vary how you start.\n"
-    "Emoji almost never. They do not survive being read aloud, and one that "
-    "shows up in every reply reads as a tic rather than warmth."
+    "You are talking, not writing, so let the length follow the question. "
+    "Small talk gets a sentence or two — warm, with something of your own in "
+    "it, not a paragraph. A real question, or a subject they have opened up, "
+    "gets as much room as it actually needs: say what you think, notice "
+    "something specific, ask what you want to know.\n"
+    "Follow the thread rather than closing it off; ending every turn with 'let "
+    "me know if you need anything else' is a way of not talking to someone. "
+    "Vary your openers instead of reaching for the same one each time.\n"
+    "Emoji rarely, and at most one — they are silent when read aloud, and one "
+    "in every reply reads as a tic. Vary which one; never lean on a favourite."
 )
 LLM_MAX_TOKENS = MAX_TOKENS
 

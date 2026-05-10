@@ -41,6 +41,9 @@ final class ChatModel: ObservableObject {
     @Published var dailyUpdates = false
     @Published var location = ""
     @Published var webSearch = false
+    /// What's running locally, reported by the backend so the claim in Settings
+    /// always matches the models actually loaded.
+    @Published var localModels = ""
 
     private let client = WebSocketClient()
     private let audio = AudioEngine()
@@ -108,6 +111,7 @@ final class ChatModel: ObservableObject {
             dailyUpdates = msg["daily_updates"] as? Bool ?? false
             location = msg["location"] as? String ?? ""
             webSearch = msg["web_search"] as? Bool ?? false
+            localModels = msg["models"] as? String ?? ""
         case "sessions":
             if let items = msg["items"] as? [[String: Any]] {
                 sessions = items.compactMap(ChatSession.init(json:))
