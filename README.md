@@ -67,3 +67,19 @@ Then, in another terminal:
 ```bash
 cd app && swift run                           # SwiftUI app; type to chat locally
 ```
+
+## Licence
+
+Fennel is **GPL-3.0-or-later** — see `LICENSE`.
+
+That is forced rather than chosen: the speech pipeline links espeak-ng and
+phonemizer-fork, both GPL-3.0, so the combined work must be GPL-3.0 too.
+Everything else Fennel bundles is permissive (Apache-2.0 or MIT). Dropping
+espeak would allow a permissive licence, at the cost of out-of-vocabulary
+words — names especially — being skipped when spoken.
+
+If you distribute a built Fennel.app, you must make this source available to
+whoever receives it (GPL-3.0 §6).
+
+Full component list, roles and licences: [`THIRD-PARTY.md`](THIRD-PARTY.md),
+also readable in the app under Settings → Licences.

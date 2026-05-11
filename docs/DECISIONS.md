@@ -679,3 +679,38 @@ talking, not writing", follow the thread rather than closing it with "let me
 know if you need anything else", and never reuse an opener. Emoji guidance moved
 from "at most one" to "almost never", with the reason stated — they don't
 survive being read aloud, and one that appears every time reads as a tic.
+
+---
+
+## D-LICENCE — GPL-3.0, because the speech pipeline decided it
+
+Auditing what Fennel actually bundles turned up one thing that outranks every
+other licensing question: **espeak-ng is GPL-3.0**, and it arrives through
+`misaki[en]` → `espeakng-loader` + `phonemizer-fork`, which ships a real
+`libespeak-ng.dylib` inside the venv. Kokoro's pipeline builds an
+`EspeakFallback` whenever it can import it.
+
+That makes the bundled app a combined work with GPL-3.0 code, so Fennel is
+GPL-3.0-or-later, and distributing a binary means publishing this source.
+
+It was a genuine choice, and it was measured before being made. Without espeak,
+misaki drops out-of-vocabulary words silently (`unk=""`): 5 of ~49 words across
+six test sentences, and they were exactly the ones that matter — Okonkwo,
+Siobhan, Krzysztof, Nopa, protoplanetary. Permissive licensing was available at
+the price of a speech engine that skips names. Quality won.
+
+Everything else is permissive and verified rather than assumed — declared
+licences read from installed package metadata and the Hugging Face API, not from
+memory: Qwen3-4B, Whisper small.en and Kokoro-82M are Apache-2.0; Silero VAD and
+bge-small are MIT.
+
+Obligations now met in the build: GPL-3.0 and Apache-2.0 texts are copied into
+`Contents/Resources` and shown in-app under Settings → Licences, because both
+licences require the text to accompany the binary rather than merely exist in a
+repository. Open-Meteo is CC BY 4.0 and is credited by name in Settings;
+Wikipedia extracts carry the article title and a link.
+
+Two things left for whoever ships this: Kokoro's per-voice provenance (the model
+is Apache-2.0, individual voices derive from varied data — Fennel uses `af_heart`
+only), and RSS terms if feed content is ever republished rather than read
+locally.

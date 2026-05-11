@@ -162,6 +162,7 @@ private struct VoiceOrb: View {
 private struct SettingsMenu: View {
     @EnvironmentObject var chat: ChatModel
     @State private var open = false
+    @State private var showLicenses = false
 
     private var online: Bool { chat.dailyUpdates || chat.webSearch }
 
@@ -180,6 +181,9 @@ private struct SettingsMenu: View {
                             .foregroundStyle(.tertiary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
+                    Button("Licences") { showLicenses = true }
+                        .buttonStyle(.link)
+                        .font(.system(size: 10))
                 }
 
                 Divider()
@@ -215,6 +219,7 @@ private struct SettingsMenu: View {
             .padding(16)
             .frame(width: 320)
         }
+        .sheet(isPresented: $showLicenses) { LicensesView() }
     }
 
     private func toggleRow(_ title: String, isOn: Binding<Bool>, note: String) -> some View {
