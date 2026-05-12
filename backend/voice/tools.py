@@ -18,6 +18,8 @@ import re
 from datetime import datetime, timedelta
 from typing import Any, Optional
 
+import config
+
 # The model emits Hermes-style calls: <tool_call>{"name":…,"arguments":{…}}</tool_call>
 _OPEN, _CLOSE = "<tool_call>", "</tool_call>"
 
@@ -567,7 +569,7 @@ def system_prompt(base: str, now: Optional[datetime] = None) -> str:
         for i in range(8)
     )
     return (
-        f"{base}\n\n"
+        f"{base}{config._DIRECT if config.DIRECT_TONE else ''}\n\n"
         "Dates:\n"
         f"{days}\n"
         "Each user message may open with a <context> block holding the current "
