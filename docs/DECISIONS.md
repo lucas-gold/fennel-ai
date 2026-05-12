@@ -714,3 +714,35 @@ Two things left for whoever ships this: Kokoro's per-voice provenance (the model
 is Apache-2.0, individual voices derive from varied data — Fennel uses `af_heart`
 only), and RSS terms if feed content is ever republished rather than read
 locally.
+
+---
+
+## D-MODEL — What swapping the base model would actually cost
+
+`LLM_MODEL` is one line, and everything downstream is model-agnostic — except
+tool calling, which is coupled to Qwen's chat template. Checked rather than
+assumed, by rendering the same tool schema through each tokenizer:
+
+| model | tools in template | emits |
+|---|---|---|
+| Qwen3-4B-Instruct | yes | `<tool_call>` — what `ToolStream` parses |
+| Llama-3.2-3B-Instruct | yes | a different format |
+| Mistral-7B-Instruct-v0.3 | yes | `[TOOL_CALLS]` |
+| Gemma-2-2b-it | **no** | template rejects a system role outright |
+
+So a swap silently breaks every tool unless `ToolStream` learns that model's
+format. Gemma additionally has nowhere to put the primed system prefix, which
+the whole latency design rests on.
+
+Hardware narrows it further: this M2 runs a 4-bit 4B at ~24 tok/s. A 7–8B lands
+near half that, which is below conversational speed. The practical field is 4B
+and smaller, and Qwen3-4B is the strongest tool-caller in that range.
+
+**On refusals specifically.** A local flag (`DIRECT_TONE`) was added to strip
+hedging — disclaimers, "I'm not a professional", redirecting someone who wanted
+to talk. Measured across four deliberately hard prompts (a cancer diagnosis, a
+failing relationship, drinking limits, revenge fiction): **0 hedging markers
+with the flag off, 0 with it on.** The persona rewrite in D-VOICE had already
+removed that behaviour, so the flag changes nothing measurable and is kept only
+as a place to experiment. Anything still being refused is trained into the
+weights, where prompts do not reach and only a different model would.
