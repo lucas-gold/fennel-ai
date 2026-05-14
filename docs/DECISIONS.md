@@ -714,3 +714,39 @@ Two things left for whoever ships this: Kokoro's per-voice provenance (the model
 is Apache-2.0, individual voices derive from varied data — Fennel uses `af_heart`
 only), and RSS terms if feed content is ever republished rather than read
 locally.
+
+---
+
+## D-BUNDLE — One app, no terminal; and the part money can't skip
+
+Fennel now ships as a single `.app` that starts its own backend
+(`BackendProcess.swift`), so opening it is the whole install.
+
+**The runtime is copied, not the venv.** A venv only symlinks to its
+interpreter — here, uv's CPython under `~/.local/share/uv` — so copying
+`.venv` produces a bundle that works on this Mac and nowhere else. uv's CPython
+is built to be relocatable, so `scripts/bundle-app.sh` copies *that* and drops
+site-packages inside it. Verified by running the copy from a scratch directory
+with every import the pipeline needs.
+
+**Nothing could be trimmed.** torch alone is 503 MB and the obvious cut, but
+exercising the full pipeline shows torch, spacy, numba, llvmlite, sympy and
+scipy all load — misaki's English G2P and mlx-audio pull them in. 1.4 GB app,
+570 MB compressed.
+
+**Models are not bundled.** They are ~3 GB and would roughly triple the
+download, so they fetch on first launch behind a first-run overlay — a blank
+window while several gigabytes arrive just looks broken. This is the one moment
+Fennel needs the network; after it, nothing.
+
+**The app must kill its child.** A Python process that outlives the app keeps
+port 8420, and the next launch silently talks to a stale backend — which, given
+how much of this project's debugging has been "the running code isn't the code
+I edited", is worth the SIGTERM-then-SIGKILL.
+
+**Gatekeeper is the honest blocker.** The build is ad-hoc signed, which is fine
+locally and refused on anyone else's Mac. Distribution needs a Developer ID
+certificate (a paid Apple Developer account), the hardened runtime, and
+notarization — `scripts/notarize.sh` does it, but no script can supply the
+account. Python additionally needs the JIT and library-validation entitlements
+or it crashes under the hardened runtime.
