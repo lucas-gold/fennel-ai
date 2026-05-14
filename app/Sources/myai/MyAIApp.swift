@@ -35,9 +35,13 @@ final class LaunchState: ObservableObject {
         // The window shouldn't claim to be ready before the backend answers.
         // First run also downloads models, which takes minutes, so this is a
         // state the UI has to be able to sit in for a while.
+        // Ready means the backend says its models are loaded, not merely that
+        // the socket opened — on a first run the gap between those is minutes.
         Task {
-            while !chat.connected { try? await Task.sleep(for: .milliseconds(400)) }
-            starting = false
+            while !(chat.connected && chat.setupPhase == "ready") {
+                try? await Task.sleep(for: .milliseconds(300))
+            }
+            withAnimation(.easeOut(duration: 0.3)) { starting = false }
         }
         NotificationCenter.default.addObserver(
             forName: NSApplication.willTerminateNotification, object: nil, queue: .main

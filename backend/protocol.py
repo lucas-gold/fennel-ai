@@ -45,6 +45,7 @@ _AUDIO_HEADER = struct.Struct(">II")
 #     A read-style tool (agenda) gets its answer back via tool_result "data".
 # {"type": "sessions", "items": [{id,title,updated,count}], "current": N}
 # {"type": "session_opened", "id": N, "messages": [{"role","text"}]}
+# {"type": "cancel"}                      drop any audio still queued
 # {"type": "pong"}
 
 

@@ -23,32 +23,88 @@ struct RootView: View {
     }
 }
 
-/// Shown until the backend answers. On a first launch that means downloading
-/// ~3 GB of models, which takes minutes — a blank window would just look broken,
-/// and this is the one moment Fennel genuinely needs the network.
+/// Shown until the backend reports its models are loaded.
+///
+/// The consent step is the point of this screen. Fennel's claim is that it runs
+/// on your machine, so the one moment it needs the network is the moment that
+/// most deserves asking — and the backend makes no request at all until the
+/// button here is pressed.
 private struct FirstRunOverlay: View {
+    @EnvironmentObject var chat: ChatModel
     @State private var breathe = false
 
     var body: some View {
-        VStack(spacing: 16) {
+        VStack(spacing: 18) {
             FennelLogo(size: 54)
                 .foregroundStyle(Theme.accent)
-                .opacity(breathe ? 1 : 0.45)
+                .opacity(breathe ? 1 : 0.5)
                 .animation(.easeInOut(duration: 1.6).repeatForever(autoreverses: true),
                            value: breathe)
-            VStack(spacing: 5) {
-                Text("Getting Fennel ready").font(Theme.title(15, .semibold))
-                Text("The first launch downloads the models it runs on — a few\ngigabytes, once. After this it works offline.")
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-                    .lineSpacing(2)
-            }
+            content
         }
+        .frame(maxWidth: 420)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(.regularMaterial)
         .transition(.opacity)
         .onAppear { breathe = true }
+    }
+
+    @ViewBuilder private var content: some View {
+        switch chat.setupPhase {
+        case "needs_consent":
+            VStack(spacing: 12) {
+                Text("One-time setup").font(Theme.title(16, .semibold))
+                Text("Fennel needs to download the models it runs on — about \(chat.setupSize). This is the only time it uses the internet unless you turn on daily updates or Wikipedia lookups.")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .lineSpacing(3)
+                    .fixedSize(horizontal: false, vertical: true)
+                Button("Download \(chat.setupSize)") { chat.allowSetupDownload() }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.large)
+                Text(chat.localModels.isEmpty ? "" : chat.localModels)
+                    .font(.system(size: 10).monospaced())
+                    .foregroundStyle(.tertiary)
+                    .multilineTextAlignment(.center)
+            }
+            .padding(.horizontal, 28)
+
+        case "downloading":
+            VStack(spacing: 10) {
+                Text("Downloading").font(Theme.title(15, .semibold))
+                ProgressView(value: chat.setupProgress)
+                    .progressViewStyle(.linear)
+                    .frame(width: 300)
+                Text(chat.setupDetail.isEmpty ? "Starting…" : chat.setupDetail)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+                Text("You can leave this running — it only happens once.")
+                    .font(.system(size: 10)).foregroundStyle(.tertiary)
+            }
+
+        case "failed":
+            VStack(spacing: 8) {
+                Label("Setup failed", systemImage: "exclamationmark.triangle.fill")
+                    .font(Theme.title(15, .semibold)).foregroundStyle(.orange)
+                Text(chat.setupDetail)
+                    .font(.system(size: 11)).foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(.horizontal, 28)
+
+        default:
+            VStack(spacing: 5) {
+                Text(chat.connected ? "Getting Fennel ready" : "Starting Fennel")
+                    .font(Theme.title(15, .semibold))
+                Text(chat.setupDetail.isEmpty
+                     ? "Loading the models it runs on."
+                     : chat.setupDetail)
+                    .font(.system(size: 11)).foregroundStyle(.secondary)
+            }
+        }
     }
 }
 
@@ -109,7 +165,7 @@ private struct HomePanel: View {
             Image(systemName: "sparkles")
                 .font(.system(size: 18))
                 .foregroundStyle(.tertiary)
-            Text("Reminders, timers and anything it looks up\nwill appear here.")
+            Text("Anything worth keeping in front of you\nshows up here.")
                 .font(.system(size: 11))
                 .foregroundStyle(.tertiary)
                 .multilineTextAlignment(.center)

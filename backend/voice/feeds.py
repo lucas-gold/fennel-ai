@@ -90,22 +90,44 @@ def geocode(place: str) -> Optional[tuple[float, float, str]]:
 
 
 def weather(lat: float, lon: float, label: str) -> Optional[str]:
-    """One line of today's weather. Open-Meteo: free, no key, no account."""
+    """Today's forecast as hour-by-hour lines, not a snapshot.
+
+    The briefing is fetched once and then sits in the prompt all day, so a
+    "current temperature" captured at fetch time is wrong within the hour — it
+    was reporting the overnight low as the current temp in the afternoon.
+    Instead we ship the whole day's hourly series and let the model read off the
+    row matching the clock in its `<context>` block.
+
+    Open-Meteo: free, no key, no account.
+    """
     q = urllib.parse.urlencode({
         "latitude": lat, "longitude": lon, "timezone": "auto",
-        "current": "temperature_2m,weather_code",
-        "daily": "temperature_2m_max,temperature_2m_min,precipitation_probability_max,weather_code",
+        "hourly": "temperature_2m,precipitation_probability,weather_code",
+        "daily": "temperature_2m_max,temperature_2m_min,"
+                 "precipitation_probability_max,precipitation_sum,weather_code,sunrise,sunset",
         "forecast_days": 1,
     })
     try:
         d = json.loads(_get(f"https://api.open-meteo.com/v1/forecast?{q}"))
-        cur, day = d["current"], d["daily"]
-        unit = d.get("current_units", {}).get("temperature_2m", "°C")
-        return (f"Weather in {label}: {_WMO.get(cur['weather_code'], 'mixed')}, "
-                f"now {round(cur['temperature_2m'])}{unit}, "
-                f"high {round(day['temperature_2m_max'][0])}{unit} / "
-                f"low {round(day['temperature_2m_min'][0])}{unit}, "
-                f"{day['precipitation_probability_max'][0]}% chance of precipitation.")
+        day, hourly = d["daily"], d["hourly"]
+        unit = d.get("daily_units", {}).get("temperature_2m_max", "°C")
+        lines = [
+            f"Weather in {label} today: {_WMO.get(day['weather_code'][0], 'mixed')}, "
+            f"high {round(day['temperature_2m_max'][0])}{unit}, "
+            f"low {round(day['temperature_2m_min'][0])}{unit}, "
+            f"{day['precipitation_probability_max'][0]}% chance of precipitation"
+            f" ({day['precipitation_sum'][0]} mm expected)."
+            f" Sunrise {day['sunrise'][0][-5:]}, sunset {day['sunset'][0][-5:]}.",
+            "Hour by hour (local time, temp, chance of precipitation, conditions) —"
+            " read the row matching the current time rather than assuming:",
+        ]
+        rows = []
+        for t, temp, pop, code in zip(hourly["time"], hourly["temperature_2m"],
+                                      hourly["precipitation_probability"],
+                                      hourly["weather_code"]):
+            rows.append(f"{t[-5:]} {round(temp)}{unit} {pop}% {_WMO.get(code, 'mixed')}")
+        lines.append("; ".join(rows))
+        return "\n".join(lines)
     except Exception as exc:
         print(f"[feeds] weather failed: {exc}", flush=True)
         return None

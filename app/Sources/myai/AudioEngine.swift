@@ -64,6 +64,15 @@ final class AudioEngine {
             player = AVAudioPlayerNode()
             if mic {
                 try engine.inputNode.setVoiceProcessingEnabled(true)
+                // Voice processing ducks everything else on the system by
+                // default, which silences the user's music the moment Fennel
+                // opens. Echo cancellation still works without it; whether the
+                // room is quiet enough is the user's call, not ours.
+                if #available(macOS 14.0, *) {
+                    engine.inputNode.voiceProcessingOtherAudioDuckingConfiguration =
+                        AVAudioVoiceProcessingOtherAudioDuckingConfiguration(
+                            enableAdvancedDucking: false, duckingLevel: .min)
+                }
                 let inFormat = engine.inputNode.outputFormat(forBus: 0)
                 // Voice processing inflates the mono mic to a 7-channel stream and
                 // AVAudioConverter's multichannel downmix yields silence — so we
