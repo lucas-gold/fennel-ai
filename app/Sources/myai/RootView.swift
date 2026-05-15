@@ -1,7 +1,16 @@
 import SwiftUI
 
 struct RootView: View {
+    @EnvironmentObject var launch: LaunchState
+
     var body: some View {
+        ZStack {
+            main
+            if launch.starting { FirstRunOverlay() }
+        }
+    }
+
+    private var main: some View {
         HStack(spacing: 0) {
             HomePanel()
                 .frame(width: 320)
@@ -11,6 +20,35 @@ struct RootView: View {
                 .frame(minWidth: 460)
         }
         .background(Color(nsColor: .textBackgroundColor))
+    }
+}
+
+/// Shown until the backend answers. On a first launch that means downloading
+/// ~3 GB of models, which takes minutes — a blank window would just look broken,
+/// and this is the one moment Fennel genuinely needs the network.
+private struct FirstRunOverlay: View {
+    @State private var breathe = false
+
+    var body: some View {
+        VStack(spacing: 16) {
+            FennelLogo(size: 54)
+                .foregroundStyle(Theme.accent)
+                .opacity(breathe ? 1 : 0.45)
+                .animation(.easeInOut(duration: 1.6).repeatForever(autoreverses: true),
+                           value: breathe)
+            VStack(spacing: 5) {
+                Text("Getting Fennel ready").font(Theme.title(15, .semibold))
+                Text("The first launch downloads the models it runs on — a few\ngigabytes, once. After this it works offline.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .lineSpacing(2)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(.regularMaterial)
+        .transition(.opacity)
+        .onAppear { breathe = true }
     }
 }
 
