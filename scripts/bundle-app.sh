@@ -23,7 +23,10 @@ swift build --package-path app -c release
 BIN="$ROOT/app/.build/release/myai"
 
 echo "==> assembling bundle"
-rm -rf "$ROOT/dist"; mkdir -p "$APP/Contents/MacOS" "$RES"
+# `|| true`: Finder recreates .DS_Store while the delete is in flight if the
+# folder happens to be open, and that shouldn't fail a build.
+rm -rf "$ROOT/dist" || true
+mkdir -p "$APP/Contents/MacOS" "$RES"
 cp "$BIN" "$APP/Contents/MacOS/Fennel"
 cp app/Resources/Info.plist "$APP/Contents/Info.plist"
 cp app/Resources/Fennel.icns "$RES/Fennel.icns"
