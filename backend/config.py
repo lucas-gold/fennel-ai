@@ -115,6 +115,8 @@ EMBED_MAX_TOKENS = 256
 # The briefing lives in the PRIMED PREFIX, so it costs nothing per turn — but a
 # longer prefix does slow decode (measured 24 -> 21 tok/s at ~1300 tokens), so
 # it is budgeted. ~2400 chars is roughly 600 tokens.
+# Headline budget only — the weather block is exempt, since an hour-by-hour
+# forecast is ~800 chars and would otherwise crowd out every headline.
 BRIEFING_MAX_CHARS = 2400
 # Everything fetched is archived for retrieval even if it didn't fit the prefix.
 # Pruned so storage is bounded: ~150 KB/day of vectors, so a year is ~50 MB.

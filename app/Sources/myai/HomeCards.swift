@@ -132,11 +132,13 @@ struct HomeCard: Identifiable {
             }
         case .search:
             let hits = args["results"] as? [[String: Any]] ?? []
-            title = hits.first?["title"] as? String ?? (args["query"] as? String ?? "Search")
-            subtitle = "Wikipedia"
-            // Show what was actually found, not a list of bare headings.
+            // The query leads, not the top hit. Wikipedia's first result isn't
+            // always the one the reply drew on, and showing only that made the
+            // card look confidently wrong ("My Bed" for a question about beds).
+            title = args["query"] as? String ?? "Search"
+            subtitle = "Wikipedia · " + hits.compactMap { $0["title"] as? String }
+                .joined(separator: ", ")
             body = hits.first?["extract"] as? String
-            items = hits.dropFirst().compactMap { $0["title"] as? String }
             searchLink = (hits.first?["link"] as? String).flatMap(URL.init(string:))
             status = .done
         }

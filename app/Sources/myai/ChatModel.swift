@@ -44,6 +44,11 @@ final class ChatModel: ObservableObject {
     /// What's running locally, reported by the backend so the claim in Settings
     /// always matches the models actually loaded.
     @Published var localModels = ""
+    /// First-run setup, driven by the backend's `setup` frames.
+    @Published var setupPhase = "checking"
+    @Published var setupDetail = ""
+    @Published var setupSize = ""
+    @Published var setupProgress = 0.0
 
     private let client = WebSocketClient()
     private let audio = AudioEngine()
@@ -74,6 +79,9 @@ final class ChatModel: ObservableObject {
     }
 
     func sendUserText(_ text: String) {
+        // Typing is an interruption too. Stop locally rather than waiting for
+        // the backend's cancel to make the round trip.
+        if state == .speaking || state == .thinking { audio.stopPlayback() }
         messages.append(ChatMessage(role: .user, text: text))
         client.send(Wire.encode("user_text", ["text": text, "speak": speakTypedReplies]))
     }
@@ -102,11 +110,21 @@ final class ChatModel: ObservableObject {
         case "token":
             let turn = msg["turn"] as? Int ?? -1
             appendToken(msg["text"] as? String ?? "", turn: turn)
+        case "cancel":
+            // The backend superseded the turn: stop mid-clause rather than
+            // finishing the sentence we were already handed.
+            audio.stopPlayback()
+            activeTurn = nil
         case "turn_end":
             sawTurnEnd = true
             activeTurn = nil
         case "tool":
             handleTool(msg)
+        case "setup":
+            setupPhase = msg["phase"] as? String ?? "checking"
+            setupDetail = msg["detail"] as? String ?? ""
+            setupSize = msg["size"] as? String ?? ""
+            setupProgress = msg["progress"] as? Double ?? setupProgress
         case "settings":
             dailyUpdates = msg["daily_updates"] as? Bool ?? false
             location = msg["location"] as? String ?? ""
@@ -138,6 +156,13 @@ final class ChatModel: ObservableObject {
     }
 
     // MARK: - chat sessions
+
+    /// The user pressed Download. Until this is sent the backend has made no
+    /// network request at all.
+    func allowSetupDownload() {
+        setupPhase = "downloading"
+        client.send(Wire.encode("setup_consent"))
+    }
 
     func newSession()            { client.send(Wire.encode("session_new")) }
     func openSession(_ id: Int)  { client.send(Wire.encode("session_open", ["id": id])) }

@@ -750,3 +750,30 @@ certificate (a paid Apple Developer account), the hardened runtime, and
 notarization — `scripts/notarize.sh` does it, but no script can supply the
 account. Python additionally needs the JIT and library-validation entitlements
 or it crashes under the hardened runtime.
+
+---
+
+## D-CONSENT — Ask before the first byte, and prove it
+
+The app downloaded ~3.5 GB of models on first launch without asking. For
+something whose whole claim is that it runs on your machine, the one moment it
+needs the network is the moment that most deserves a prompt.
+
+The server now **listens before it loads**, so the app can connect, be told
+`needs_consent`, and draw a screen — a window that cannot reach its backend is
+indistinguishable from a broken one. Nothing touches the network until the app
+reports the button was pressed, including the size estimate, which is hardcoded
+rather than queried so the *estimate* costs no request either.
+
+Testing it against an empty `HF_HOME` caught the thing worth catching: 35 files
+appeared in the cache before consent, because `embed.shared()` was constructed
+eagerly in `main()` and pulled bge-small down. Now zero. The lesson is that a
+consent gate is only as good as the eager initialisation upstream of it, and the
+only way to know is to point the cache somewhere empty and count files.
+
+Progress is measured by **walking the cache directory**, not from
+huggingface_hub's tqdm hooks. Its xet backend runs several bars concurrently
+("Downloading bytes", "Reconstructing"), so summing their deltas reported 267 MB
+of progress for a 133 MB model and pinned the bar at 100%. Disk is the only
+measure that survives the library changing backends, and it is clamped to the
+estimate so the bar never reads "206 MB of 135 MB".

@@ -103,13 +103,17 @@ class Briefing:
                   "your training data — prefer them for anything recent. They are "
                   "headlines, not full articles: if something isn't covered here, "
                   "say you don't know rather than guessing.")
+        # Weather is already in `lines` and is deliberately not charged against
+        # the headline budget: it is the most-asked-for part of the briefing.
         budget = config.BRIEFING_MAX_CHARS
+        used = 0
         for i in items:
             entry = f"- [{i.source}] {i.title}"
             if i.summary:
                 entry += f" — {i.summary}"
-            if sum(len(x) + 1 for x in lines) + len(entry) > budget:
+            if used + len(entry) > budget:
                 break
+            used += len(entry) + 1
             lines.append(entry)
 
         if not lines:

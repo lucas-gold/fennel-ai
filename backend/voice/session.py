@@ -207,15 +207,25 @@ class Session:
         self._epoch += 1        # invalidate every in-flight stage (D3)
         self._stop.set()        # unblock the LLM worker thread
         self._assistant_active = False
-        self._audio_until = 0.0  # the app drops queued audio on barge-in too
+        self._audio_until = 0.0
+        await self._send_control(P.encode("cancel"))   # drop queued audio now
         await self._send_control(P.encode("state", value="idle"))
         # The interrupted turn commits its partial reply in _run_turn's finally.
 
     async def _supersede(self) -> None:
-        """Ensure any in-flight turn has fully wound down (and committed)."""
+        """Ensure any in-flight turn has fully wound down (and committed).
+
+        Sends `cancel` as well as bumping the epoch. The epoch stops us
+        *generating*, but the app has already been handed whole clauses of audio
+        and will happily finish playing them — so the assistant kept talking
+        over an interruption whenever barge-in itself hadn't fired (a typed
+        message, or speech the stricter VAD gate only recognised at endpoint).
+        """
         if self._turn_task and not self._turn_task.done():
             self._epoch += 1
             self._stop.set()
+            self._audio_until = 0.0
+            await self._send_control(P.encode("cancel"))
             await self._turn_task
 
     async def _start_turn(self, audio: Optional[np.ndarray] = None,

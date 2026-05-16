@@ -9,13 +9,14 @@ from __future__ import annotations
 
 import asyncio
 from datetime import date
+from functools import partial
 
 import numpy as np
 import websockets
 
 import config
 import protocol as P
-from voice import embed
+from voice import embed, setup as model_setup
 from voice.briefing import Briefing, Retriever
 from voice.llm import LLM
 from voice.memory import Memory
@@ -89,12 +90,61 @@ async def _refresh_briefing(session: Session) -> None:
     print("[briefing] folded into the primed prefix", flush=True)
 
 
+# First-run state, shared by every connection. The server starts listening
+# BEFORE the models load so the app can show a consent screen and a progress
+# bar; nothing touches the network until `_consent` is set from the UI.
+_clients: set = set()
+_consent = asyncio.Event()
+_setup_state: dict = {"phase": "checking"}   # fields only; "type" is added on send
+
+
+async def _broadcast(msg: str) -> None:
+    for ws in list(_clients):
+        try:
+            await ws.send(msg)
+        except Exception:
+            _clients.discard(ws)
+
+
+def _set_setup(**fields) -> None:
+    """Record setup state and push it to every connected client.
+
+    Always called on the event loop — the download reporter runs on a worker
+    thread and marshals through `call_soon_threadsafe` before getting here.
+    """
+    global _setup_state
+    _setup_state = dict(fields)
+    asyncio.get_running_loop().create_task(
+        _broadcast(P.encode("setup", **_setup_state)))
+
+
 async def handler(ws) -> None:
     async def send_control(s: str) -> None:
         await ws.send(s)
 
     async def send_audio(b: bytes) -> None:
         await ws.send(b)
+
+    _clients.add(ws)
+    await ws.send(P.encode("setup", **_setup_state))
+    if _setup_state.get("phase") != "ready":
+        # Models aren't loaded yet: serve only the setup conversation until they
+        # are, so the app can ask for consent and draw a progress bar instead of
+        # showing a window that looks alive but answers nothing.
+        try:
+            async for raw in ws:
+                if isinstance(raw, (bytes, bytearray)):
+                    continue
+                if P.decode(raw).get("type") == "setup_consent":
+                    _consent.set()
+                if _setup_state.get("phase") == "ready":
+                    break
+        except Exception:
+            _clients.discard(ws)
+            return
+        if _setup_state.get("phase") != "ready":
+            _clients.discard(ws)
+            return
 
     session = Session(send_control, send_audio, _stt, _llm, _tts,
                       _store, _memory, system=_current_system())
@@ -143,6 +193,7 @@ async def handler(ws) -> None:
                 elif msg["type"] == "ping":
                     await ws.send(P.encode("pong"))
     finally:
+        _clients.discard(ws)
         await session.close()
 
 
@@ -150,6 +201,55 @@ async def main() -> None:
     global _stt, _llm, _tts, _store, _memory, _briefing, _system, _system_day
     _store = Store()
     _briefing = Briefing(_store)
+    # Embeddings power both news retrieval and conversational recall; loading is
+    # lazy and optional, so a failure degrades to keyword search (embed.shared).
+    # NB: the embedder is NOT constructed here. Loading it downloads bge-small,
+    # which would put ~130 MB on the wire before the user has been asked
+    # anything — measured, and exactly the promise this screen exists to keep.
+    # It is built in _prepare_models, after consent.
+
+    # Listen FIRST. The app needs a connection to ask about downloading, and a
+    # window that can't reach its backend is indistinguishable from a broken one.
+    async with websockets.serve(handler, config.HOST, config.PORT, max_size=None):
+        print(f"Fennel backend listening on ws://{config.HOST}:{config.PORT}  "
+              f"(tier={config.TIER})", flush=True)
+        await _prepare_models()
+        await asyncio.Future()
+
+
+async def _prepare_models() -> None:
+    """Consent, download, load, warm, prime — reporting each step to the app."""
+    global _stt, _llm, _tts, _memory, _system, _system_day
+
+    if pending := model_setup.missing():
+        size = model_setup.human(model_setup.total_bytes(pending))
+        print(f"[setup] {len(pending)} model(s) missing, {size}", flush=True)
+        _set_setup(phase="needs_consent", size=size,
+                   detail="Fennel needs to download the models it runs on.")
+        await _consent.wait()          # nothing has touched the network yet
+        _set_setup(phase="downloading", progress=0.0, detail="Starting…", size=size)
+
+        loop = asyncio.get_running_loop()
+
+        def report(what: str, done: int, total: int) -> None:
+            frac = 0.0 if total <= 0 else min(1.0, done / total)
+            # partial, not kwargs: call_soon_threadsafe forwards positional
+            # arguments only.
+            loop.call_soon_threadsafe(partial(
+                _set_setup, phase="downloading", progress=frac, size=size,
+                detail=f"Downloading the {what} — "
+                       f"{model_setup.human(done)} of {model_setup.human(total)}"))
+
+        try:
+            await asyncio.to_thread(model_setup.download, report)
+        except Exception as exc:
+            print(f"[setup] download failed: {exc}", flush=True)
+            _set_setup(phase="failed",
+                       detail=f"Download failed: {exc}. Check your connection "
+                              "and reopen Fennel.")
+            return
+
+    _set_setup(phase="loading", detail="Loading models…")
     # Embeddings power both news retrieval and conversational recall; loading is
     # lazy and optional, so a failure degrades to keyword search (embed.shared).
     _emb = embed.shared()
@@ -161,13 +261,13 @@ async def main() -> None:
     _llm = await asyncio.to_thread(LLM)
     _tts = await asyncio.to_thread(KokoroTTS)
     _stt = WhisperSTT()
+
+    _set_setup(phase="loading", detail="Warming up…")
     print("warming models …", flush=True)  # move cold-start cost off turn 1
     await asyncio.to_thread(_stt.warmup)
     await asyncio.to_thread(_tts.warmup)
     await asyncio.to_thread(_llm.warmup)
-    # Fetch today's briefing here, before we start listening, so the common case
-    # (backend and app started together) never races the prime against a turn.
-    # The on-connect refresh then only fires when the day rolls over mid-run.
+
     if _briefing.is_stale():
         await asyncio.to_thread(_briefing.build, embed.shared())
     _llm.tools = tool_list(_feature_settings())
@@ -175,10 +275,9 @@ async def main() -> None:
     # user's first sentence — ~1600-2200 tokens of stable prefix (D4).
     _system, _system_day = _build_system(), date.today()
     await asyncio.to_thread(_llm.prime, _system)
-    print(f"Fennel backend listening on ws://{config.HOST}:{config.PORT}  "
-          f"(tier={config.TIER})", flush=True)
-    async with websockets.serve(handler, config.HOST, config.PORT, max_size=None):
-        await asyncio.Future()
+
+    _set_setup(phase="ready")
+    print("Fennel ready.", flush=True)
 
 
 if __name__ == "__main__":

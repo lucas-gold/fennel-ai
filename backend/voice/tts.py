@@ -23,9 +23,28 @@ _SENT_END = re.compile(r"[.!?…]['\"”’)\]]?(?:\s|$)")
 _EMOJI_JOINERS = {0xFE0F, 0x200D}
 
 
+# Markdown the model emits for the chat pane but which must never be spoken:
+# Kokoro reads "*" aloud as "asterisk".
+_MD_EMPHASIS = re.compile(r"(\*{1,3}|_{2,3})(.+?)\1", re.S)
+_MD_CODE = re.compile(r"`{1,3}([^`]*)`{1,3}", re.S)
+_MD_LINK = re.compile(r"\[([^\]]+)\]\([^)]+\)")
+_MD_LEADING = re.compile(r"^\s{0,3}(?:[#>]{1,6}\s*|[-*+]\s+|\d+[.)]\s+)", re.M)
+_MD_LEFTOVER = re.compile(r"[*_`~]{1,3}")
+
+
 def speakable(text: str) -> str:
-    """Strip emoji and other symbol characters (Unicode category 'So') plus the
-    emoji joiners, so Kokoro doesn't try to pronounce them."""
+    """What Kokoro should actually say: no emoji, no markdown.
+
+    The model writes for the chat pane, so replies arrive with **bold**, bullet
+    dashes and backticks in them. Kokoro pronounces those literally — "asterisk
+    asterisk bold" — which is the kind of detail that makes a voice sound broken.
+    Emphasis is unwrapped rather than deleted so the words survive.
+    """
+    text = _MD_LINK.sub(r"\1", text)
+    text = _MD_CODE.sub(r"\1", text)
+    text = _MD_EMPHASIS.sub(r"\2", text)
+    text = _MD_LEADING.sub("", text)
+    text = _MD_LEFTOVER.sub("", text)          # unmatched pairs, e.g. a lone *
     kept = [ch for ch in text
             if unicodedata.category(ch) != "So" and ord(ch) not in _EMOJI_JOINERS]
     return re.sub(r"\s+", " ", "".join(kept)).strip()
