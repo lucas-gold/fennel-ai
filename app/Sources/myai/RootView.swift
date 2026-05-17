@@ -70,6 +70,19 @@ private struct FirstRunOverlay: View {
             }
             .padding(.horizontal, 28)
 
+        case "loading", "checking":
+            VStack(spacing: 6) {
+                Text(chat.connected ? "Getting Fennel ready" : "Starting Fennel")
+                    .font(Theme.title(15, .semibold))
+                Text(chat.setupDetail.isEmpty ? "Loading the models it runs on."
+                                              : chat.setupDetail)
+                    .font(.system(size: 11)).foregroundStyle(.secondary)
+                if chat.setupEta > 1 { Countdown(seconds: chat.setupEta) }
+                Text("Nothing is downloading — these are already on your Mac.")
+                    .font(.system(size: 10)).foregroundStyle(.tertiary)
+                    .padding(.top, 2)
+            }
+
         case "downloading":
             VStack(spacing: 10) {
                 Text("Downloading").font(Theme.title(15, .semibold))
@@ -105,6 +118,24 @@ private struct FirstRunOverlay: View {
                     .font(.system(size: 11)).foregroundStyle(.secondary)
             }
         }
+    }
+}
+
+/// Counts down from the backend's estimate, which is the duration the *last*
+/// successful start actually took rather than a guess. Stops at "any moment now"
+/// instead of going negative or pretending to be precise.
+private struct Countdown: View {
+    let seconds: Double
+    @State private var start = Date()
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 1)) { ctx in
+            let left = Int((seconds - ctx.date.timeIntervalSince(start)).rounded())
+            Text(left > 0 ? "About \(left)s remaining" : "Any moment now…")
+                .font(.system(size: 11, weight: .medium).monospacedDigit())
+                .foregroundStyle(.secondary)
+        }
+        .onChange(of: seconds) { _, _ in start = Date() }
     }
 }
 
@@ -165,7 +196,7 @@ private struct HomePanel: View {
             Image(systemName: "sparkles")
                 .font(.system(size: 18))
                 .foregroundStyle(.tertiary)
-            Text("Anything worth keeping in front of you\nshows up here.")
+            Text("When Fennel does something for you — a reminder,\na timer, a lookup — the card lands here.")
                 .font(.system(size: 11))
                 .foregroundStyle(.tertiary)
                 .multilineTextAlignment(.center)
@@ -351,7 +382,7 @@ private struct ChatPanel: View {
                 LazyVStack(alignment: .leading, spacing: 14) {
                     if chat.messages.isEmpty { welcome }
                     ForEach(chat.messages) { MessageRow(message: $0) }
-                    if chat.state == .thinking { TypingIndicator() }
+                    if chat.showTyping { TypingIndicator() }
                     Color.clear.frame(height: 1).id(bottomID)
                 }
                 .padding(.horizontal, 22)

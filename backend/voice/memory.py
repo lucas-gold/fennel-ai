@@ -15,7 +15,8 @@ each costs a prefill only as often as it actually changes (D4):
 """
 from __future__ import annotations
 
-from datetime import datetime
+import json
+from datetime import date, datetime
 from typing import Optional
 
 import config
@@ -106,6 +107,8 @@ class Memory:
         the system prompt so the primed prefix stays byte-identical (D-PREFIX)."""
         now = now or datetime.now()
         parts = [f"time: {now.strftime('%-I:%M %p')}"]
+        if w := self._weather_now(now):
+            parts.append(w)
         for h in self._recall(session_id, user_text):
             who = "they said" if h["role"] == "user" else "you said"
             text = " ".join(h["content"].split())[:160]
@@ -125,6 +128,28 @@ class Memory:
                 if budget <= 0:
                     break
         return "<context>\n" + "\n".join(parts) + "\n</context>\n"
+
+    def _weather_now(self, now: datetime) -> Optional[str]:
+        """Today's forecast row for the current hour, resolved here rather than
+        left to the model.
+
+        The briefing carries all 24 rows, but a 4-bit 4B model would not match
+        the clock against them: it answered "the weather at 3pm" correctly and
+        "the weather now" with the overnight low, every time. One line of
+        arithmetic removes the inference entirely.
+        """
+        if self._store.setting("weather_day") != date.today().isoformat():
+            return None                    # stale; the briefing will refresh it
+        try:
+            rows = json.loads(self._store.setting("weather_hourly", "[]"))
+        except (ValueError, TypeError):
+            return None
+        if not rows:
+            return None
+        want = f"{now.hour:02d}:00"
+        row = next((r for r in rows if r.get("t") == want), None) or rows[-1]
+        return (f"weather right now ({row['t']}): {row['temp']}{row.get('unit', '°C')}, "
+                f"{row['cond']}, {row['pop']}% chance of precipitation")
 
     # ── the verbatim window ────────────────────────────────────────────────
 
