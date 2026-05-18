@@ -365,6 +365,9 @@ class Session:
                 await self._send_control(P.encode("state", value="idle"))
                 return
         if not self._live(epoch) or not text.strip():
+            # Nothing to answer, but we already announced "thinking" — say so.
+            if self._live(epoch):
+                await self._send_control(P.encode("state", value="idle"))
             return
         if from_voice:  # let the UI show what was heard
             await self._send_control(P.encode("stt", text=text))
@@ -507,8 +510,10 @@ class Session:
             if self._live(epoch):
                 self._commit(turn_start, visible.strip())
                 await self._send_control(P.encode("turn_end", turn=turn))
-                if do_speak:
-                    await self._send_control(P.encode("state", value="idle"))
+                # Unconditional, to match the unconditional "thinking" above.
+                # Gated on do_speak, a typed turn with speech off never came out
+                # of thinking and the UI stayed stuck on it forever.
+                await self._send_control(P.encode("state", value="idle"))
                 await self._after_turn()
             else:
                 # barge-in: history records only what was actually spoken (D3)
