@@ -9,13 +9,17 @@ doubles time-to-first-token.
 from __future__ import annotations
 
 import asyncio
+import glob
+import hashlib
+import os
 import threading
 from typing import AsyncIterator, Iterator, Optional
 
 import mlx.core as mx
 from mlx_lm import load, stream_generate
 from mlx_lm.sample_utils import make_sampler
-from mlx_lm.models.cache import make_prompt_cache, trim_prompt_cache
+from mlx_lm.models.cache import (load_prompt_cache, make_prompt_cache,
+                                  save_prompt_cache, trim_prompt_cache)
 
 import config
 from voice.tools import TOOLS
@@ -38,6 +42,7 @@ class LLM:
         self._cache = make_prompt_cache(self.model)
         self._cached_ids: list[int] = []
         self._prime_len = 0
+        self._prime_key = ""
         # Which tools to advertise. Optional ones come and go with the user's
         # settings, and changing them changes the primed prefix.
         self.tools = list(TOOLS)
@@ -57,6 +62,18 @@ class LLM:
         else:
             self._cache = make_prompt_cache(self.model)
             self._cached_ids = []
+
+    def _prime_cache_path(self, token_count: int) -> str:
+        """Where the primed KV state for this exact prefix lives on disk.
+
+        Keyed by model + the precise prefix, so a changed briefing, a toggled
+        tool or a new day simply misses and recomputes rather than restoring
+        something subtly wrong.
+        """
+        from voice.store import APP_DIR
+        key = hashlib.sha256(
+            f"{config.LLM_MODEL}|{token_count}|{self._prime_key}".encode()).hexdigest()[:16]
+        return os.path.join(APP_DIR, "primecache", f"{key}.safetensors")
 
     def prime(self, system: str) -> None:
         """Prefill the stable prefix — persona, tool schemas, day table — once at
@@ -78,7 +95,29 @@ class LLM:
             add_generation_prompt=False, tokenize=True, tools=self.tools))
         n = _common_prefix(sys_only, probe)
 
+        self._prime_key = system
+        path = self._prime_cache_path(n)
+
+        # Restoring beats recomputing by a wide margin: this machine prefills at
+        # ~187 tok/s no matter how the work is chunked, so ~2700 tokens is ~15 s
+        # of arithmetic that is byte-identical on every launch. Measured 14.60 s
+        # to compute versus 0.03 s to load.
         with self._lock:
+            if os.path.exists(path):
+                try:
+                    restored, meta = load_prompt_cache(path, return_metadata=True)
+                    if int(meta.get("n", -1)) == n:
+                        mx.eval([c.state for c in restored])
+                        self._cache = restored
+                        self._cached_ids = probe[:n]
+                        self._prime_len = n
+                        print(f"[llm] restored {n} primed tokens from cache",
+                              flush=True)
+                        return
+                except Exception as exc:
+                    print(f"[llm] prime cache unusable, recomputing: {exc}",
+                          flush=True)
+
             ids = mx.array(probe[:n])
             step = 512  # chunked like mlx-lm's own prefill: full-length logits
             while ids.size > step:      # for 900 positions would spike ~0.5 GB
@@ -90,7 +129,27 @@ class LLM:
 
             self._cached_ids = probe[:n]
             self._prime_len = n
+            self._save_prime_cache(path, n)
         print(f"[llm] primed {n} prefix tokens", flush=True)
+
+    def _save_prime_cache(self, path: str, n: int) -> None:
+        """Persist the primed state, keeping only the newest file.
+
+        ~400 MB per prefix, so old ones are swept: the prefix changes when the
+        briefing does, which is daily, and a directory of stale dailies would
+        quietly eat the disk.
+        """
+        try:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            for stale in glob.glob(os.path.join(os.path.dirname(path), "*.safetensors")):
+                if stale != path:
+                    try:
+                        os.remove(stale)
+                    except OSError:
+                        pass
+            save_prompt_cache(path, self._cache, metadata={"n": str(n)})
+        except Exception as exc:
+            print(f"[llm] couldn't save prime cache: {exc}", flush=True)
 
     def complete(self, messages: list[Message], max_tokens: int = 160) -> str:
         """One-shot generation on a throwaway cache.

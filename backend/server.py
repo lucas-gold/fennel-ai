@@ -318,15 +318,19 @@ async def _prepare_models() -> None:
     # user's first sentence — ~1600-2200 tokens of stable prefix (D4).
     _system, _system_day = _build_system(), date.today()
 
-    # Ready BEFORE priming. Priming prefills ~3700 tokens at ~200 tok/s, which is
-    # ~18 s of "preparing the conversation" the user simply waits through — and
-    # if they type during it they'd pay that prefill inside their first turn
-    # anyway. Backgrounding it makes the wait free whenever they take a moment to
-    # start, and no worse when they don't; the LLM lock serialises the two.
+    # Priming happens before ready again. Backgrounding it only moved the wait
+    # onto the user's first question, which is worse — but it is no longer a
+    # wait: the primed KV state is restored from disk in ~0.06 s instead of the
+    # ~15 s it takes to recompute (D-PRIMECACHE). Only the first launch after
+    # the briefing changes pays the full cost.
+    _set_setup(phase="loading", detail="Preparing the conversation…",
+               loaded="3.5 GB in memory",
+               eta=max(1.0, eta - (time.monotonic() - started)))
+    await asyncio.to_thread(_llm.prime, _system)
+
     _store.set_setting("startup_seconds", f"{time.monotonic() - started:.0f}")
     _set_setup(phase="ready")
     print("Fennel ready.", flush=True)
-    asyncio.create_task(asyncio.to_thread(_llm.prime, _system))
 
 
 if __name__ == "__main__":
