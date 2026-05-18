@@ -169,9 +169,18 @@ private struct HomePanel: View {
         .padding(.top, 14)
     }
 
+    /// The orb is the *voice* surface. During a text-only exchange the mic is
+    /// shut, so lighting it amber for "thinking" made a closed microphone look
+    /// active — the typing dots in the transcript are the right feedback there.
+    /// It still turns green when speech is actually coming out of the speakers.
+    private var orbState: AssistantState {
+        if chat.listening || chat.state == .speaking { return chat.state }
+        return .idle
+    }
+
     private var orbSection: some View {
         VStack(spacing: 14) {
-            VoiceOrb(state: chat.state, listening: chat.listening, level: chat.level)
+            VoiceOrb(state: orbState, listening: chat.listening, level: chat.level)
                 .onTapGesture { chat.toggleListening() }
             Text(statusLine)
                 .font(.system(size: 12, weight: .medium))
@@ -183,7 +192,7 @@ private struct HomePanel: View {
     }
 
     private var statusLine: String {
-        switch chat.state {
+        switch orbState {
         case .speaking: return "Speaking"
         case .thinking: return "Thinking"
         default: return chat.listening ? "Listening — tap to stop" : "Tap to talk"
