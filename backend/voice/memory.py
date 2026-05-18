@@ -16,6 +16,7 @@ each costs a prefill only as often as it actually changes (D4):
 from __future__ import annotations
 
 import json
+import re
 from datetime import date, datetime
 from typing import Optional
 
@@ -24,6 +25,15 @@ from voice import embed
 from voice.store import Store
 
 Message = dict[str, str]
+
+# Words that make today's forecast relevant. Deliberately broad — a missed
+# mention costs a vaguer answer, an unwanted one costs the model's credibility.
+_WEATHERY = re.compile(
+    r"\b(weather|forecast|rain|rains|raining|snow|snowing|sun|sunny|cloud|"
+    r"cloudy|wind|windy|storm|humid|temperature|temp|degrees|hot|warm|cold|"
+    r"chilly|freezing|mild|outside|outdoors|out today|jacket|coat|umbrella|"
+    r"sunscreen|wear|dress|walk|run|bike|cycle|beach|park|picnic|barbecue|"
+    r"bbq|sunrise|sunset|nice out|going out)\b", re.I)
 
 _SUMMARY_PROMPT = (
     "Summarise this conversation in under 60 words, in the third person, "
@@ -107,7 +117,10 @@ class Memory:
         the system prompt so the primed prefix stays byte-identical (D-PREFIX)."""
         now = now or datetime.now()
         parts = [f"time: {now.strftime('%-I:%M %p')}"]
-        if w := self._weather_now(now):
+        # Only when the turn is plausibly about it. Present unconditionally, the
+        # model volunteered the forecast in reply to "hey what's up" — anything
+        # sitting in the context block reads as something worth saying.
+        if _WEATHERY.search(user_text) and (w := self._weather_now(now)):
             parts.append(w)
         for h in self._recall(session_id, user_text):
             who = "they said" if h["role"] == "user" else "you said"

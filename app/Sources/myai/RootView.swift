@@ -77,10 +77,12 @@ private struct FirstRunOverlay: View {
                 Text(chat.setupDetail.isEmpty ? "Loading the models it runs on."
                                               : chat.setupDetail)
                     .font(.system(size: 11)).foregroundStyle(.secondary)
+                if !chat.setupLoaded.isEmpty {
+                    Text(chat.setupLoaded)
+                        .font(.system(size: 10).monospacedDigit())
+                        .foregroundStyle(.tertiary)
+                }
                 if chat.setupEta > 1 { Countdown(seconds: chat.setupEta) }
-                Text("Nothing is downloading — these are already on your Mac.")
-                    .font(.system(size: 10)).foregroundStyle(.tertiary)
-                    .padding(.top, 2)
             }
 
         case "downloading":

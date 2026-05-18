@@ -51,6 +51,7 @@ final class ChatModel: ObservableObject {
     @Published var setupProgress = 0.0
     @Published var setupEta = 0.0
     @Published var setupDownloading = false
+    @Published var setupLoaded = ""       // "1.2 GB of 3.5 GB in memory"
     /// Set once the backend has sent this session's history, so the window is
     /// never revealed as an empty chat that fills in a moment later.
     @Published var sessionLoaded = false
@@ -157,6 +158,7 @@ final class ChatModel: ObservableObject {
             setupProgress = msg["progress"] as? Double ?? setupProgress
             setupEta = msg["eta"] as? Double ?? setupEta
             setupDownloading = msg["downloading"] as? Bool ?? (setupPhase == "downloading")
+            setupLoaded = msg["loaded"] as? String ?? ""
         case "settings":
             dailyUpdates = msg["daily_updates"] as? Bool ?? false
             location = msg["location"] as? String ?? ""

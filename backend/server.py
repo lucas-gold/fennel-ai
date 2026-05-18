@@ -271,22 +271,41 @@ async def _prepare_models() -> None:
     # it gets a rough default and then records the real number for next time.
     eta = float(_store.setting("startup_seconds", "45") or 45)
     started = time.monotonic()
-    _set_setup(phase="loading", detail="Loading models…", eta=eta,
-               downloading=False)
-    # Embeddings power both news retrieval and conversational recall; loading is
-    # lazy and optional, so a failure degrades to keyword search (embed.shared).
-    _emb = embed.shared()
-    _memory = Memory(_store, Retriever(_store, _emb), _emb)
+    # Weights go into unified memory one model at a time; naming each with its
+    # size is more informative than a spinner, and explains where the wait goes.
+    steps = [
+        ("Qwen3-4B — the conversation", "2.3 GB"),
+        ("Kokoro — the voice", "0.6 GB"),
+        ("Whisper — speech recognition", "0.5 GB"),
+        ("bge-small — memory and recall", "0.1 GB"),
+    ]
+
+    def loading(i: int) -> None:
+        name, size = steps[i]
+        done = sum(float(s.split()[0]) for _, s in steps[:i])
+        _set_setup(phase="loading", eta=max(1.0, eta - (time.monotonic() - started)),
+                   detail=f"Loading {name} — {size} into memory",
+                   loaded=f"{done:.1f} GB of 3.5 GB in memory")
+
+    loading(0)
     print("loading models "
           f"({config.LLM_MODEL.split('/')[-1]}, "
           f"{config.STT_MODEL.split('/')[-1]}, "
           f"{config.TTS_MODEL.split('/')[-1]}) …", flush=True)
     _llm = await asyncio.to_thread(LLM)
+    loading(1)
     _tts = await asyncio.to_thread(KokoroTTS)
+    loading(2)
     _stt = WhisperSTT()
+    loading(3)
+    # Embeddings power both news retrieval and conversational recall; loading is
+    # lazy and optional, so a failure degrades to keyword search (embed.shared).
+    _emb = embed.shared()
+    _memory = Memory(_store, Retriever(_store, _emb), _emb)
 
-    _set_setup(phase="loading", detail="Warming up the models…",
-               eta=max(1.0, eta - (time.monotonic() - started)), downloading=False)
+    _set_setup(phase="loading", detail="Warming up — compiling GPU kernels",
+               loaded="3.5 GB in memory",
+               eta=max(1.0, eta - (time.monotonic() - started)))
     print("warming models …", flush=True)  # move cold-start cost off turn 1
     await asyncio.to_thread(_stt.warmup)
     await asyncio.to_thread(_tts.warmup)
@@ -298,13 +317,16 @@ async def _prepare_models() -> None:
     # Prefill tool schemas + day table + briefing now rather than during the
     # user's first sentence — ~1600-2200 tokens of stable prefix (D4).
     _system, _system_day = _build_system(), date.today()
-    _set_setup(phase="loading", detail="Preparing the conversation…",
-               eta=max(1.0, eta - (time.monotonic() - started)), downloading=False)
-    await asyncio.to_thread(_llm.prime, _system)
 
+    # Ready BEFORE priming. Priming prefills ~3700 tokens at ~200 tok/s, which is
+    # ~18 s of "preparing the conversation" the user simply waits through — and
+    # if they type during it they'd pay that prefill inside their first turn
+    # anyway. Backgrounding it makes the wait free whenever they take a moment to
+    # start, and no worse when they don't; the LLM lock serialises the two.
     _store.set_setting("startup_seconds", f"{time.monotonic() - started:.0f}")
     _set_setup(phase="ready")
     print("Fennel ready.", flush=True)
+    asyncio.create_task(asyncio.to_thread(_llm.prime, _system))
 
 
 if __name__ == "__main__":
