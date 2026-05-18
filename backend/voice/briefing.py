@@ -15,6 +15,7 @@ in year three as on day one. Only the archive grows, and it is pruned.
 """
 from __future__ import annotations
 
+import json
 from datetime import date, datetime
 from typing import Optional
 
@@ -55,11 +56,15 @@ class Briefing:
             return None
         return self._store.briefing(day or today())
 
+    # Bump when the *shape* of what build() stores changes. Twice now a fix has
+    # shipped inert because the briefing was still "fresh": first a saved city
+    # that never produced weather, then hourly rows that were never written
+    # because the day and place hadn't changed.
+    SCHEMA = 2
+
     def _fingerprint(self) -> str:
-        """What today's briefing was built from. Changing the city has to
-        invalidate it: "is there a briefing for today" was not enough, and the
-        result was a saved city that never produced any weather."""
-        return f"{today()}|{self.place.strip().lower()}"
+        """What today's briefing was built from — day, place, and schema."""
+        return f"{today()}|{self.place.strip().lower()}|v{self.SCHEMA}"
 
     def is_stale(self) -> bool:
         if not self.enabled:
@@ -78,8 +83,13 @@ class Briefing:
 
         if place := self.place:
             if geo := feeds.geocode(place):
-                if w := feeds.weather(*geo):
-                    lines.append(w)
+                if got := feeds.weather(*geo):
+                    prose, hourly = got
+                    lines.append(prose)
+                    # Kept structured as well as in prose: the current hour is
+                    # resolved in code each turn (Memory.preamble), not inferred.
+                    self._store.set_setting("weather_hourly", json.dumps(hourly))
+                    self._store.set_setting("weather_day", day)
 
         items = feeds.headlines()
         rows = [{"source": i.source, "title": i.title, "body": i.summary,

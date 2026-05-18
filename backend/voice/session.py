@@ -353,8 +353,11 @@ class Session:
                         echo_risk: bool = False) -> None:
         from_voice = text is None
         do_speak = from_voice or speak       # voice turns always speak
+        # Typed turns need this too. It used to be inside `if from_voice`, so a
+        # typed message showed no thinking state and no typing indicator — the
+        # window just sat there looking stuck.
+        await self._send_control(P.encode("state", value="thinking"))
         if from_voice:
-            await self._send_control(P.encode("state", value="thinking"))
             text = await asyncio.to_thread(self._stt.transcribe, audio)
             print(f"[stt] -> {text!r}", flush=True)
             if echo_risk and self._is_echo(text):

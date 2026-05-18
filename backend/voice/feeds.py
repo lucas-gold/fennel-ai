@@ -89,14 +89,18 @@ def geocode(place: str) -> Optional[tuple[float, float, str]]:
         return None
 
 
-def weather(lat: float, lon: float, label: str) -> Optional[str]:
+def weather(lat: float, lon: float,
+            label: str) -> Optional[tuple[str, list[dict]]]:
     """Today's forecast as hour-by-hour lines, not a snapshot.
 
     The briefing is fetched once and then sits in the prompt all day, so a
     "current temperature" captured at fetch time is wrong within the hour — it
     was reporting the overnight low as the current temp in the afternoon.
-    Instead we ship the whole day's hourly series and let the model read off the
-    row matching the clock in its `<context>` block.
+    Instead we ship the whole day's hourly series. The row for the current hour
+    is also resolved in code and put in the per-turn `<context>` block — asking
+    a 4-bit 4B model to match a clock against a 24-row table does not work: it
+    answered "what's it like at 3pm" correctly and "what's it like now" with the
+    overnight low.
 
     Open-Meteo: free, no key, no account.
     """
@@ -125,9 +129,11 @@ def weather(lat: float, lon: float, label: str) -> Optional[str]:
         for t, temp, pop, code in zip(hourly["time"], hourly["temperature_2m"],
                                       hourly["precipitation_probability"],
                                       hourly["weather_code"]):
-            rows.append(f"{t[-5:]} {round(temp)}{unit} {pop}% {_WMO.get(code, 'mixed')}")
-        lines.append("; ".join(rows))
-        return "\n".join(lines)
+            rows.append({"t": t[-5:], "temp": round(temp), "pop": pop,
+                         "cond": _WMO.get(code, "mixed"), "unit": unit})
+        lines.append("; ".join(
+            f"{r['t']} {r['temp']}{unit} {r['pop']}% {r['cond']}" for r in rows))
+        return "\n".join(lines), rows
     except Exception as exc:
         print(f"[feeds] weather failed: {exc}", flush=True)
         return None

@@ -8,6 +8,8 @@ chat box still works and now also speaks its reply.
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import time
 from datetime import date
 from functools import partial
 
@@ -95,6 +97,7 @@ async def _refresh_briefing(session: Session) -> None:
 # bar; nothing touches the network until `_consent` is set from the UI.
 _clients: set = set()
 _consent = asyncio.Event()
+_ready = asyncio.Event()
 _setup_state: dict = {"phase": "checking"}   # fields only; "type" is added on send
 
 
@@ -114,6 +117,8 @@ def _set_setup(**fields) -> None:
     """
     global _setup_state
     _setup_state = dict(fields)
+    if fields.get("phase") == "ready":
+        _ready.set()
     asyncio.get_running_loop().create_task(
         _broadcast(P.encode("setup", **_setup_state)))
 
@@ -127,22 +132,35 @@ async def handler(ws) -> None:
 
     _clients.add(ws)
     await ws.send(P.encode("setup", **_setup_state))
-    if _setup_state.get("phase") != "ready":
+    if not _ready.is_set():
         # Models aren't loaded yet: serve only the setup conversation until they
         # are, so the app can ask for consent and draw a progress bar instead of
         # showing a window that looks alive but answers nothing.
-        try:
+        #
+        # Readiness is awaited as an Event *alongside* reading the socket. A
+        # plain `async for` here only noticed the models were ready when the app
+        # happened to send something — so after loading, the window showed an
+        # empty chat that filled in only once the user typed.
+        async def pump() -> None:
             async for raw in ws:
                 if isinstance(raw, (bytes, bytearray)):
                     continue
                 if P.decode(raw).get("type") == "setup_consent":
                     _consent.set()
-                if _setup_state.get("phase") == "ready":
-                    break
-        except Exception:
-            _clients.discard(ws)
-            return
-        if _setup_state.get("phase") != "ready":
+
+        pump_task = asyncio.create_task(pump())
+        ready_task = asyncio.create_task(_ready.wait())
+        done, _pending = await asyncio.wait(
+            {pump_task, ready_task}, return_when=asyncio.FIRST_COMPLETED)
+        # Await the cancellation, don't just request it: websockets refuses a
+        # second concurrent recv, and the pump keeps its slot until the
+        # CancelledError has actually been delivered.
+        for t in (pump_task, ready_task):
+            if not t.done():
+                t.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await t
+        if pump_task in done:          # socket closed before we were ready
             _clients.discard(ws)
             return
 
@@ -249,7 +267,12 @@ async def _prepare_models() -> None:
                               "and reopen Fennel.")
             return
 
-    _set_setup(phase="loading", detail="Loading models…")
+    # Estimate from the last successful start; the first run has no history, so
+    # it gets a rough default and then records the real number for next time.
+    eta = float(_store.setting("startup_seconds", "45") or 45)
+    started = time.monotonic()
+    _set_setup(phase="loading", detail="Loading models…", eta=eta,
+               downloading=False)
     # Embeddings power both news retrieval and conversational recall; loading is
     # lazy and optional, so a failure degrades to keyword search (embed.shared).
     _emb = embed.shared()
@@ -262,7 +285,8 @@ async def _prepare_models() -> None:
     _tts = await asyncio.to_thread(KokoroTTS)
     _stt = WhisperSTT()
 
-    _set_setup(phase="loading", detail="Warming up…")
+    _set_setup(phase="loading", detail="Warming up the models…",
+               eta=max(1.0, eta - (time.monotonic() - started)), downloading=False)
     print("warming models …", flush=True)  # move cold-start cost off turn 1
     await asyncio.to_thread(_stt.warmup)
     await asyncio.to_thread(_tts.warmup)
@@ -274,8 +298,11 @@ async def _prepare_models() -> None:
     # Prefill tool schemas + day table + briefing now rather than during the
     # user's first sentence — ~1600-2200 tokens of stable prefix (D4).
     _system, _system_day = _build_system(), date.today()
+    _set_setup(phase="loading", detail="Preparing the conversation…",
+               eta=max(1.0, eta - (time.monotonic() - started)), downloading=False)
     await asyncio.to_thread(_llm.prime, _system)
 
+    _store.set_setting("startup_seconds", f"{time.monotonic() - started:.0f}")
     _set_setup(phase="ready")
     print("Fennel ready.", flush=True)
 

@@ -35,10 +35,12 @@ final class LaunchState: ObservableObject {
         // The window shouldn't claim to be ready before the backend answers.
         // First run also downloads models, which takes minutes, so this is a
         // state the UI has to be able to sit in for a while.
-        // Ready means the backend says its models are loaded, not merely that
-        // the socket opened — on a first run the gap between those is minutes.
+        // Ready means: socket open, models loaded, AND this session's history
+        // delivered. Dropping the overlay any earlier showed an empty chat that
+        // filled itself in a second later, which reads as a bug.
         Task {
-            while !(chat.connected && chat.setupPhase == "ready") {
+            while !(chat.connected && chat.setupPhase == "ready"
+                    && chat.sessionLoaded) {
                 try? await Task.sleep(for: .milliseconds(300))
             }
             withAnimation(.easeOut(duration: 0.3)) { starting = false }

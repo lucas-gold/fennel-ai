@@ -777,3 +777,41 @@ huggingface_hub's tqdm hooks. Its xet backend runs several bars concurrently
 of progress for a 133 MB model and pinned the bar at 100%. Disk is the only
 measure that survives the library changing backends, and it is clamped to the
 estimate so the bar never reads "206 MB of 135 MB".
+
+
+---
+
+## D-NOW — Don't ask a 4B model to read a table against a clock
+
+The briefing carries all 24 hourly forecast rows, and the `<context>` block
+carries the current time. Asking the model to join them did not work: the
+weather *at 3pm* was answered correctly every time, and the weather *now* came
+back with the overnight low every time. It is not a prompting problem — it is
+arithmetic, and arithmetic belongs in code.
+
+`Memory._weather_now` looks up the row for the current hour and states it
+outright in the per-turn context. The hourly rows stay in the prefix so "will it
+rain later" still works; only *now* is resolved for it.
+
+**Two fixes shipped inert before this one landed**, both for the same reason:
+the briefing's freshness fingerprint was `day|place`, so a code change to *what
+build() stores* left yesterday's shape in place and the new field was simply
+never written. The fingerprint now includes a `SCHEMA` version. Any change to
+what a cached artefact contains needs the cache key to know about it.
+
+---
+
+## D-GATE-WAIT — Waiting on a socket is not waiting on a condition
+
+The setup gate held new connections in `async for raw in ws` until the models
+were ready, checking readiness after each message. Nothing sends messages during
+startup, so the handler only noticed it was ready when the user typed — which is
+exactly what the "opens to an empty chat, then fills in a few seconds later"
+report was. Readiness is an `asyncio.Event` now, awaited *alongside* the socket
+read.
+
+Cancelling the reader is not enough on its own: websockets refuses a second
+concurrent `recv`, and the cancelled task holds its slot until the
+`CancelledError` has actually been delivered. The cancellation has to be
+awaited, or the real handler dies with a `ConcurrencyError` the moment setup
+finishes.

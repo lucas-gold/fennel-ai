@@ -49,11 +49,33 @@ final class ChatModel: ObservableObject {
     @Published var setupDetail = ""
     @Published var setupSize = ""
     @Published var setupProgress = 0.0
+    @Published var setupEta = 0.0
+    @Published var setupDownloading = false
+    /// Set once the backend has sent this session's history, so the window is
+    /// never revealed as an empty chat that fills in a moment later.
+    @Published var sessionLoaded = false
+    /// Shown as a three-dot bubble, but only once a reply is genuinely slow —
+    /// flashing it on every fast turn is worse than not having it.
+    @Published var showTyping = false
 
     private let client = WebSocketClient()
     private let audio = AudioEngine()
     private var activeTurn: Int?
     private var sawTurnEnd = true             // false while a turn is underway
+    private var awaitToken = 0                // invalidates a pending typing timer
+
+    /// Start the one-second fuse for the typing indicator. Anything that ends
+    /// the wait — a token, turn_end, a cancel — bumps `awaitToken` so a stale
+    /// timer can't light the dots after the reply already arrived.
+    private func beginAwaitingReply() {
+        awaitToken += 1
+        let mine = awaitToken
+        showTyping = false
+        Task {
+            try? await Task.sleep(for: .seconds(1))
+            if mine == awaitToken { showTyping = true }
+        }
+    }
 
     func connect() {
         client.onControl = { [weak self] msg in
@@ -83,6 +105,7 @@ final class ChatModel: ObservableObject {
         // the backend's cancel to make the round trip.
         if state == .speaking || state == .thinking { audio.stopPlayback() }
         messages.append(ChatMessage(role: .user, text: text))
+        beginAwaitingReply()
         client.send(Wire.encode("user_text", ["text": text, "speak": speakTypedReplies]))
     }
 
@@ -106,8 +129,11 @@ final class ChatModel: ObservableObject {
         case "stt":                                    // what the mic was heard to say
             if let t = msg["text"] as? String, !t.isEmpty {
                 messages.append(ChatMessage(role: .user, text: t))
+                beginAwaitingReply()
             }
         case "token":
+            awaitToken += 1                 // a reply is arriving; drop the dots
+            showTyping = false
             let turn = msg["turn"] as? Int ?? -1
             appendToken(msg["text"] as? String ?? "", turn: turn)
         case "cancel":
@@ -115,9 +141,13 @@ final class ChatModel: ObservableObject {
             // finishing the sentence we were already handed.
             audio.stopPlayback()
             activeTurn = nil
+            awaitToken += 1
+            showTyping = false
         case "turn_end":
             sawTurnEnd = true
             activeTurn = nil
+            awaitToken += 1
+            showTyping = false
         case "tool":
             handleTool(msg)
         case "setup":
@@ -125,6 +155,8 @@ final class ChatModel: ObservableObject {
             setupDetail = msg["detail"] as? String ?? ""
             setupSize = msg["size"] as? String ?? ""
             setupProgress = msg["progress"] as? Double ?? setupProgress
+            setupEta = msg["eta"] as? Double ?? setupEta
+            setupDownloading = msg["downloading"] as? Bool ?? (setupPhase == "downloading")
         case "settings":
             dailyUpdates = msg["daily_updates"] as? Bool ?? false
             location = msg["location"] as? String ?? ""
@@ -145,6 +177,7 @@ final class ChatModel: ObservableObject {
             }
             activeTurn = nil
             sawTurnEnd = true
+            sessionLoaded = true
         default:
             break
         }
