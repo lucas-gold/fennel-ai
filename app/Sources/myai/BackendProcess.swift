@@ -46,6 +46,10 @@ final class BackendProcess {
         var env = ProcessInfo.processInfo.environment
         env["PYTHONUNBUFFERED"] = "1"
         env["PYTHONHOME"] = res!.appendingPathComponent("runtime").path
+        // So the backend cannot outlive us: if we are force-quit and never
+        // reach `stop()`, it notices this pid is gone and exits rather than
+        // holding the port against the next launch.
+        env["FENNEL_PARENT_PID"] = String(ProcessInfo.processInfo.processIdentifier)
         task.environment = env
         if let handle {
             task.standardOutput = handle
