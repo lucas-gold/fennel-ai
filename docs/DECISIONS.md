@@ -815,3 +815,33 @@ concurrent `recv`, and the cancelled task holds its slot until the
 `CancelledError` has actually been delivered. The cancellation has to be
 awaited, or the real handler dies with a `ConcurrencyError` the moment setup
 finishes.
+
+
+---
+
+## D-PRIMECACHE — Don't recompute a prefix that never changed
+
+Priming prefills ~2,700 tokens of persona, tool schemas, day table and briefing.
+Measured on this M2 that is **14.6 s at ~187 tok/s**, and chunk size makes no
+difference (256/512/1024/2048 all land within 0.4 s of each other) — the
+arithmetic is simply real.
+
+But it is the *same* arithmetic on every launch. `mlx_lm` can serialise a KV
+cache, so the primed state is written to disk and restored instead:
+
+| | time |
+|---|---|
+| compute the prefill | 14.60 s |
+| save (404 MB) | 0.17 s |
+| **restore** | **0.03 s** |
+
+Keyed by a hash of the model id, the token count and the exact prefix string, so
+a changed briefing, a toggled tool or a new day misses cleanly rather than
+restoring something subtly wrong. Only the newest file is kept — at 404 MB a
+directory of stale dailies would quietly eat the disk.
+
+The detour worth recording: the first attempt was to report ready *before*
+priming and prime in the background. That doesn't remove the wait, it moves it
+onto the user's first question — which is a worse place for it, because a chat
+that sits there unresponsive reads as broken where a progress screen reads as
+progress. Caching removes the wait rather than relocating it.
