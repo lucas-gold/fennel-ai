@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import os
 import time
 from datetime import date
 from functools import partial
@@ -231,8 +232,30 @@ async def main() -> None:
     async with websockets.serve(handler, config.HOST, config.PORT, max_size=None):
         print(f"Fennel backend listening on ws://{config.HOST}:{config.PORT}  "
               f"(tier={config.TIER})", flush=True)
+        asyncio.create_task(_watch_parent())
         await _prepare_models()
         await asyncio.Future()
+
+
+async def _watch_parent() -> None:
+    """Exit if the app that launched us goes away.
+
+    A force-quit or crash skips `BackendProcess.stop()`, leaving an orphaned
+    backend holding port 8420 — and the next launch then fails to bind and sits
+    on the loading screen forever. Only armed when the app passes its pid, so a
+    backend started by hand from a terminal is unaffected.
+    """
+    parent = os.environ.get("FENNEL_PARENT_PID")
+    if not parent or not parent.isdigit():
+        return
+    pid = int(parent)
+    while True:
+        await asyncio.sleep(2)
+        try:
+            os.kill(pid, 0)          # signal 0 just tests for existence
+        except OSError:
+            print("[backend] the app exited; shutting down", flush=True)
+            os._exit(0)
 
 
 async def _prepare_models() -> None:
