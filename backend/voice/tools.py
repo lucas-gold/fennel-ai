@@ -123,14 +123,43 @@ TOOLS: list[dict] = [
     {
         "type": "function",
         "function": {
+            "name": "search_wikipedia",
+            "description": (
+                "Look a subject up in an encyclopedia. Best for things that are "
+                "settled rather than current: people, places, history, science, "
+                "definitions, how something works. Prefer this over search_web "
+                "whenever the answer would not have changed this year — it is "
+                "free, fast and needs no quota. It cannot find news, prices, "
+                "local businesses or anything from the last few months. Call it "
+                "and wait; you are given the article text, answer from that, and "
+                "say it came from Wikipedia."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Search terms, not a full sentence."},
+                },
+                "required": ["query"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "search_web",
             "description": (
-                "Look a topic up on Wikipedia when you don't know it, aren't "
-                "sure, or your knowledge may be out of date — people, places, "
-                "science, history, definitions. It cannot find local businesses "
-                "or breaking news. Call it and wait; you are given the article "
-                "text, and then you answer from it and say it came from "
-                "Wikipedia. Do not answer from memory once you've decided to look."
+                "Search the live web. Use it when the answer depends on what is "
+                "true *now* — news, prices, releases, schedules, scores, local "
+                "places, anything from the last year, or anything an "
+                "encyclopedia would not carry. Also use it whenever the user "
+                "asks you to search the web or look online. If a plain "
+                "encyclopedia article would answer just as well, prefer "
+                "search_wikipedia instead.\n"
+                "Work like a researcher: search with terms, not a sentence. You "
+                "are given several results with snippets — read them, say what "
+                "you found and where, and if they don't actually answer the "
+                "question, search once more with better terms rather than "
+                "guessing. Never invent a source or a URL."
             ),
             "parameters": {
                 "type": "object",
@@ -323,7 +352,10 @@ TOOL_NAMES = {t["function"]["name"] for t in TOOLS}
 # stored like any other reply, and then teaches refusal even after the user
 # enables it — which is exactly what happened. If it isn't offered, it can't be
 # tried, so nothing teachable is recorded.
-OPTIONAL_TOOLS = {"search_web": "web_search"}
+OPTIONAL_TOOLS = {
+    "search_wikipedia": "lookups",   # the free one; on with the Look things up switch
+    "search_web": "web_key",         # additionally needs the user's own API key
+}
 
 
 def tool_list(settings: dict[str, bool]) -> list[dict]:
@@ -335,7 +367,8 @@ def tool_list(settings: dict[str, bool]) -> list[dict]:
 # run another LLM round after these, even if the model already said something —
 # skipping it (which is right for side-effecting tools) leaves the user with
 # "let me look that up" and then silence.
-ANSWERING_TOOLS = {"search_web", "agenda", "run_shortcut", "create_shortcut"}
+ANSWERING_TOOLS = {"search_web", "search_wikipedia", "agenda",
+                   "run_shortcut", "create_shortcut"}
 
 
 # ── streaming split ────────────────────────────────────────────────────────
@@ -501,7 +534,7 @@ def normalize(name: str, args: dict) -> tuple[dict, dict]:
                   else f"{minutes:g} min")
         return card, {"ok": True, "label": label, "length": pretty}
 
-    if name == "search_web":
+    if name in ("search_web", "search_wikipedia"):
         query = str(args.get("query", "")).strip()
         if not query:
             return {}, {"ok": False, "error": "a search query is required"}

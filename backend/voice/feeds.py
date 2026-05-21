@@ -19,6 +19,7 @@ from __future__ import annotations
 import html
 import json
 import re
+import urllib.error
 import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
@@ -172,6 +173,48 @@ def wiki_search(query: str, limit: int = 2) -> list[Item]:
             continue
         out.append(Item(source="Wikipedia", title=_text(p.get("title"), 120),
                         summary=extract, link=p.get("fullurl", "")))
+    return out
+
+
+class QuotaExhausted(Exception):
+    """The search key is out of allowance (or is not valid any more)."""
+
+
+def web_search(query: str, api_key: str, limit: int = 5) -> list[Item]:
+    """Ollama's hosted web search. Needs the user's own key.
+
+    Raises QuotaExhausted on 401/402/429 so the caller can stop trying rather
+    than hammering a key that will keep refusing; every other failure returns
+    empty and the model falls back to Wikipedia.
+    """
+    if not api_key:
+        return []
+    body = json.dumps({"query": query.strip(),
+                       "max_results": max(1, min(10, limit))}).encode()
+    req = urllib.request.Request(
+        "https://ollama.com/api/web_search", data=body, method="POST",
+        headers={"Authorization": f"Bearer {api_key}",
+                 "Content-Type": "application/json", "User-Agent": _UA})
+    try:
+        with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
+            data = json.loads(r.read())
+    except urllib.error.HTTPError as exc:
+        if exc.code in (401, 402, 403, 429):
+            raise QuotaExhausted(f"HTTP {exc.code}") from exc
+        print(f"[feeds] web search failed: HTTP {exc.code}", flush=True)
+        return []
+    except Exception as exc:
+        print(f"[feeds] web search failed: {exc}", flush=True)
+        return []
+
+    out: list[Item] = []
+    for hit in (data.get("results") or [])[:limit]:
+        title = _text(hit.get("title"), 140)
+        content = _text(hit.get("content"), 700)
+        if not (title or content):
+            continue
+        out.append(Item(source="Web", title=title or "(untitled)",
+                        summary=content, link=(hit.get("url") or "").strip()))
     return out
 
 

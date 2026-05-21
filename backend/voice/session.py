@@ -40,13 +40,27 @@ from voice.vad import Endpointer
 # the model: instructing the model to speak before calling made it sometimes say
 # the line and never call at all.
 LEAD_INS = {
-    "search_web": "Let me look that up.",
+    "search_wikipedia": "Let me look that up.",
+    "search_web": "Let me search the web for that.",
     "create_shortcut": "Let me put that together.",
     "agenda": "Let me check.",
 }
 
 # Unicode symbol/pictograph ranges plus the joiners that compose them.
 _EMOJI = re.compile("[\U0001F300-\U0001FAFF\u2600-\u27BF\uFE0F\u200D]")
+
+
+# Led in from inside the search branch instead, once we know a request is
+# actually going out — announcing "let me search the web" and then admitting we
+# can't is worse than simply saying we can't.
+_LEADS_ITSELF = {"search_web", "search_wikipedia"}
+
+
+async def _lead(say, name: str) -> None:
+    """Speak the holding line for a slow tool. `say` suppresses itself once the
+    turn has produced any prose, so calling this twice is harmless."""
+    if say is not None and (line := LEAD_INS.get(name)):
+        await say(line)
 
 
 def _words(text: str) -> list[str]:
@@ -244,6 +258,32 @@ class Session:
 
     # ── tools ──────────────────────────────────────────────────────────────
 
+    def _quota_block(self) -> Optional[str]:
+        """Why web search shouldn't be attempted right now, or None.
+
+        Once a key is refused we stop calling out entirely rather than retrying
+        into a wall — but only for a cooldown, since free allowances reset. The
+        tool stays listed so that if the user insists, the model can explain
+        what happened instead of pretending the ability never existed.
+        """
+        if not self._store.setting("web_key", ""):
+            return ("no web search key is set up; Wikipedia is available though, "
+                    "and they can add a key in the network settings")
+        hit = self._store.setting("web_quota_hit", "")
+        if not hit:
+            return None
+        try:
+            age = time.time() - float(hit)
+        except ValueError:
+            return None
+        if age < config.WEB_QUOTA_COOLDOWN_S:
+            hours = int((config.WEB_QUOTA_COOLDOWN_S - age) // 3600) + 1
+            return (f"web search is paused — the key ran out of allowance. It "
+                    f"retries in about {hours} hour(s). Say so, and offer "
+                    f"Wikipedia instead.")
+        self._store.set_setting("web_quota_hit", "")   # cooldown over, try again
+        return None
+
     def _is_echo(self, heard: str) -> bool:
         """Is this transcript just our own speech coming back through the mic?
 
@@ -281,9 +321,6 @@ class Session:
         if not result.get("ok"):
             return {"name": name, **result}
 
-        # Fill the silence before the slow part starts, not after.
-        if say is not None and name in LEAD_INS:
-            await say(LEAD_INS[name])
 
         if name == "set_fact":
             self._store.set_fact(card["key"], card["value"])
@@ -303,25 +340,55 @@ class Session:
             result = {"ok": True, "name": card["name"],
                       "note": "waiting for them to press Add"}
 
-        if name == "search_web":
+        if name in ("search_wikipedia", "search_web"):
             # Its own setting, not the daily-updates one: a daily fetch of fixed
             # feeds reveals nothing about the user, whereas this sends their
             # actual question to a third party (D-BRIEFING).
-            if self._store.setting("web_search", "0") != "1":
+            if self._store.setting("lookups", "0") != "1":
                 return {"name": name, "ok": False,
-                        "error": "web search is turned off in settings; answer "
-                                 "from what you know and say you couldn't look it up"}
-            hits = await asyncio.to_thread(feeds.wiki_search, card["query"])
+                        "error": "looking things up is turned off in settings; "
+                                 "answer from what you know and say you couldn't "
+                                 "look it up"}
+            if name == "search_web":
+                if blocked := self._quota_block():
+                    # Before any lead-in: promising "let me search the web" and
+                    # then admitting we can't is worse than simply saying so.
+                    # Short-circuit: no request is made at all, and the model is
+                    # told why so it can explain if the user pushes.
+                    return {"name": name, "ok": False, "error": blocked}
+                key = self._store.setting("web_key", "")
+                await _lead(say, name)
+                try:
+                    hits = await asyncio.to_thread(feeds.web_search, card["query"], key)
+                except feeds.QuotaExhausted as exc:
+                    self._store.set_setting("web_quota_hit", str(time.time()))
+                    print(f"[search] web quota/auth failure: {exc}", flush=True)
+                    return {"name": name, "ok": False,
+                            "error": "the web search key is out of allowance or "
+                                     "no longer valid, so web search is paused. "
+                                     "Tell them, and offer Wikipedia instead."}
+                source = "Web"
+            else:
+                await _lead(say, name)
+                hits = await asyncio.to_thread(feeds.wiki_search, card["query"])
+                source = "Wikipedia"
+
             if not hits:
                 return {"name": name, "ok": False,
-                        "error": f"nothing found on Wikipedia for {card['query']!r}"}
+                        "error": f"nothing useful came back from {source} for "
+                                 f"{card['query']!r} — try once more with "
+                                 f"different terms, or say you couldn't find it"}
             # The card carries the extract, not just the title: a list of bare
             # headings tells the user nothing about what was actually found.
-            card = {**card, "results": [
+            card = {**card, "source": source, "results": [
                 {"title": h.title, "extract": h.summary[:320], "link": h.link}
                 for h in hits]}
-            result = {"ok": True, "source": "Wikipedia",
-                      "results": [{"title": h.title, "extract": h.summary} for h in hits]}
+            result = {"ok": True, "source": source,
+                      "results": [{"title": h.title, "extract": h.summary,
+                                   "url": h.link} for h in hits]}
+
+        if name not in _LEADS_ITSELF:
+            await _lead(say, name)
 
         call_id = uuid4().hex[:8]
         fut: asyncio.Future = asyncio.get_running_loop().create_future()

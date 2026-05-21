@@ -845,3 +845,37 @@ priming and prime in the background. That doesn't remove the wait, it moves it
 onto the user's first question — which is a worse place for it, because a chat
 that sits there unresponsive reads as broken where a progress screen reads as
 progress. Caching removes the wait rather than relocating it.
+
+
+---
+
+## D-SEARCH2 — Two search tools, so the model has a source to choose between
+
+Wikipedia and live web search are separate tools rather than one tool with a
+`source` argument. The model picks by reading two descriptions that say plainly
+what each is for — encyclopedic and settled versus current and dated — which it
+does well, and which a single tool with an enum parameter does not give it.
+It also lets them gate independently: Wikipedia rides the free "Look things up"
+switch, the web tool additionally requires the user's own key.
+
+**A tool that can only fail should not be offered.** `search_web` is absent from
+the advertised list entirely when there is no key, because a tool that always
+errors teaches the model to expect failure — the same lesson as D-REPLAY.
+
+**Quota is a cooldown, not a switch.** When the key is refused (401/402/403/429)
+the failure is recorded and subsequent calls short-circuit *without making a
+request*, for six hours, after which it tries again — free allowances reset. The
+tool stays listed while paused so that if the user insists, the model can
+explain what happened rather than pretending the ability never existed.
+Verified against a deliberately invalid key: first call attempts and trips the
+flag, the next two never reach the network and the model says why.
+
+**The holding line moved.** "Let me search the web for that" used to be spoken
+before the quota check, so a paused search announced itself and then admitted it
+could not run. It is now spoken from inside the search branch, once a request is
+actually going out.
+
+**The key lives in the Keychain**, not in the settings table. Everything else
+Fennel stores is a preference; a credential belongs somewhere the OS protects
+and not in a database someone might copy or hand over while debugging. The
+backend receives it over loopback and holds it only in memory.

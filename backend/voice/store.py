@@ -158,6 +158,17 @@ class Store:
             # dozens of examples of describing an action instead of taking one.
             if "prompt_text" not in cols:
                 self._db.execute("ALTER TABLE messages ADD COLUMN prompt_text TEXT")
+            # "web_search" became "lookups" when Wikipedia and live web search
+            # split into separate tools. Carry the old value over rather than
+            # silently switching the feature off under someone who had it on.
+            old = self._db.execute(
+                "SELECT value FROM settings WHERE key='web_search'").fetchone()
+            has_new = self._db.execute(
+                "SELECT 1 FROM settings WHERE key='lookups'").fetchone()
+            if old and not has_new:
+                self._db.execute(
+                    "INSERT INTO settings (key, value) VALUES ('lookups', ?)",
+                    (old["value"],))
             self._db.commit()
 
     # ── sessions ───────────────────────────────────────────────────────────
