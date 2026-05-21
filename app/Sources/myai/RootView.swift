@@ -300,7 +300,7 @@ private struct SettingsMenu: View {
     @State private var open = false
     @State private var showLicenses = false
 
-    private var online: Bool { chat.dailyUpdates || chat.webSearch }
+    private var online: Bool { chat.dailyUpdates || chat.lookups }
 
     var body: some View {
         IconButton(symbol: online ? "wifi" : "wifi.slash",
@@ -347,15 +347,47 @@ private struct SettingsMenu: View {
 
                 Divider()
 
-                toggleRow("Look things up on Wikipedia", isOn: Binding(
-                    get: { chat.webSearch },
-                    set: { chat.webSearch = $0; chat.saveSettings() }),
-                    note: "Lets Fennel query Wikipedia's API when it doesn't know something or may be out of date. Your search terms are sent to Wikipedia; nothing else is.")
+                toggleRow("Look things up", isOn: Binding(
+                    get: { chat.lookups },
+                    set: { chat.lookups = $0; chat.saveSettings() }),
+                    note: "Lets Fennel search Wikipedia when it doesn't know something. Free, no account. Your search terms are sent to Wikipedia; nothing else is.")
+
+                if chat.lookups { webSearchKey }
             }
             .padding(16)
             .frame(width: 320)
         }
         .sheet(isPresented: $showLicenses) { LicensesView() }
+    }
+
+    /// Optional upgrade: the user's own Ollama key turns on live web search.
+    /// Deliberately presented as an extra rather than a requirement — Wikipedia
+    /// stays the default so the app is fully useful with no account anywhere.
+    @ViewBuilder private var webSearchKey: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack(spacing: 6) {
+                SecureField("Ollama API key (optional)", text: $chat.webKey)
+                    .textFieldStyle(.roundedBorder)
+                    .font(.system(size: 11))
+                    .onSubmit { chat.saveWebKey(chat.webKey) }
+                Button("Save") { chat.saveWebKey(chat.webKey) }
+                    .controlSize(.small)
+            }
+            if chat.webPaused {
+                Label("Out of allowance — paused for a few hours. Wikipedia still works.",
+                      systemImage: "clock.badge.exclamationmark")
+                    .font(.system(size: 10)).foregroundStyle(.orange)
+            } else if chat.hasWebKey {
+                Label("Live web search on — for news, prices and anything recent.",
+                      systemImage: "checkmark.circle.fill")
+                    .font(.system(size: 10)).foregroundStyle(.green)
+            } else {
+                Text("Add a free key from ollama.com to let Fennel search the live web as well. Stored in your Keychain; your searches go to Ollama.")
+                    .font(.system(size: 10)).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(.leading, 2)
     }
 
     private func toggleRow(_ title: String, isOn: Binding<Bool>, note: String) -> some View {

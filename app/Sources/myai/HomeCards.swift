@@ -136,7 +136,8 @@ struct HomeCard: Identifiable {
             // always the one the reply drew on, and showing only that made the
             // card look confidently wrong ("My Bed" for a question about beds).
             title = args["query"] as? String ?? "Search"
-            subtitle = "Wikipedia · " + hits.compactMap { $0["title"] as? String }
+            let src = args["source"] as? String ?? "Wikipedia"
+            subtitle = src + " · " + hits.compactMap { $0["title"] as? String }
                 .joined(separator: ", ")
             body = hits.first?["extract"] as? String
             searchLink = (hits.first?["link"] as? String).flatMap(URL.init(string:))

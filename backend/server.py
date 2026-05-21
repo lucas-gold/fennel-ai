@@ -60,7 +60,10 @@ def _current_system() -> str:
 
 
 def _feature_settings() -> dict[str, bool]:
-    return {"web_search": _store.setting("web_search", "0") == "1"}
+    """Which optional tools to advertise. The web tool needs a key as well as
+    the switch — offering a tool that can only fail teaches the model to fail."""
+    on = _store.setting("lookups", "0") == "1"
+    return {"lookups": on, "web_key": on and bool(_store.setting("web_key", ""))}
 
 
 async def _refresh_briefing(session: Session) -> None:
@@ -173,7 +176,9 @@ async def handler(ws) -> None:
     # writes those stale defaults back over the real ones.
     await ws.send(P.encode("settings", daily_updates=_briefing.enabled,
                            location=_briefing.place,
-                           web_search=_store.setting("web_search", "0") == "1",
+                           lookups=_store.setting("lookups", "0") == "1",
+                           has_web_key=bool(_store.setting("web_key", "")),
+                           web_paused=bool(_store.setting("web_quota_hit", "")),
                            models=config.local_models()))
     await session.open_session()          # resume where the user left off
     asyncio.create_task(_refresh_briefing(session))  # never blocks the conversation
@@ -193,13 +198,20 @@ async def handler(ws) -> None:
                 elif msg["type"] == "settings":
                     _briefing.configure(enabled=msg.get("daily_updates"),
                                         place=msg.get("location"))
-                    if (w := msg.get("web_search")) is not None:
-                        _store.set_setting("web_search", "1" if w else "0")
+                    if (w := msg.get("lookups")) is not None:
+                        _store.set_setting("lookups", "1" if w else "0")
+                    # The key arrives from the app's Keychain. "" clears it, and
+                    # a new key clears the quota pause so it is tried again.
+                    if (k := msg.get("web_key")) is not None:
+                        _store.set_setting("web_key", str(k).strip())
+                        _store.set_setting("web_quota_hit", "")
                     asyncio.create_task(_refresh_briefing(session))
                     await ws.send(P.encode(
                         "settings", daily_updates=_briefing.enabled,
                         location=_briefing.place,
-                        web_search=_store.setting("web_search", "0") == "1",
+                        lookups=_store.setting("lookups", "0") == "1",
+                        has_web_key=bool(_store.setting("web_key", "")),
+                        web_paused=bool(_store.setting("web_quota_hit", "")),
                         models=config.local_models()))
                 elif msg["type"] == "session_list":
                     await session.send_sessions()

@@ -86,6 +86,10 @@ SUMMARY_IDLE_S = 25
 # so the spoken confirmation reflects what actually happened (including a
 # permission denial) — EventKit writes take ~ms, so this only bites on failure.
 TOOL_APP_TIMEOUT_S = 2.0
+# After the web-search key is refused (quota or auth), stop calling out for this
+# long rather than retrying into a wall. Free allowances reset, so it is a
+# cooldown rather than a permanent switch-off.
+WEB_QUOTA_COOLDOWN_S = 6 * 3600
 
 # ── STT / TTS (Stage 2) ────────────────────────────────────────────────────
 # small.en ~300ms vs turbo's ~2.2s here (D9 revisited: turbo's accuracy edge

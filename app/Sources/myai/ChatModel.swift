@@ -40,7 +40,12 @@ final class ChatModel: ObservableObject {
     /// Opt-in networking. Off by default: the app is offline unless asked.
     @Published var dailyUpdates = false
     @Published var location = ""
-    @Published var webSearch = false
+    /// "Look things up" — Wikipedia, always free. The web tool additionally
+    /// needs a key, which lives in the Keychain and never in the backend's DB.
+    @Published var lookups = false
+    @Published var webKey = ""
+    @Published var hasWebKey = false
+    @Published var webPaused = false
     /// What's running locally, reported by the backend so the claim in Settings
     /// always matches the models actually loaded.
     @Published var localModels = ""
@@ -92,6 +97,7 @@ final class ChatModel: ObservableObject {
         client.onStatus = { [weak self] up in
             Task { @MainActor in self?.connected = up }
         }
+        webKey = Keychain.get("ollama_api_key")
         audio.prepare()
         client.connect()
     }
@@ -162,7 +168,9 @@ final class ChatModel: ObservableObject {
         case "settings":
             dailyUpdates = msg["daily_updates"] as? Bool ?? false
             location = msg["location"] as? String ?? ""
-            webSearch = msg["web_search"] as? Bool ?? false
+            lookups = msg["lookups"] as? Bool ?? false
+            hasWebKey = msg["has_web_key"] as? Bool ?? false
+            webPaused = msg["web_paused"] as? Bool ?? false
             localModels = msg["models"] as? String ?? ""
         case "sessions":
             if let items = msg["items"] as? [[String: Any]] {
@@ -221,12 +229,20 @@ final class ChatModel: ObservableObject {
         }
     }
 
+    /// Save the key to the Keychain and push it to the backend for this run.
+    func saveWebKey(_ key: String) {
+        webKey = key.trimmingCharacters(in: .whitespacesAndNewlines)
+        Keychain.set(webKey, for: "ollama_api_key")
+        saveSettings()
+    }
+
     /// Push the networking preferences. The backend echoes back what it stored,
     /// so the toggle always reflects reality rather than intent.
     func saveSettings() {
         client.send(Wire.encode("settings", ["daily_updates": dailyUpdates,
                                              "location": location,
-                                             "web_search": webSearch]))
+                                             "lookups": lookups,
+                                             "web_key": webKey]))
     }
 
     func title(of id: Int) -> String {
