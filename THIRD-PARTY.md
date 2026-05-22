@@ -45,14 +45,20 @@ ships `af_heart` only.
 | Source | Used for | Terms |
 |---|---|---|
 | [Open-Meteo](https://open-meteo.com/) | daily forecast | CC BY 4.0 — **attribution required**, given in Settings and here |
-| [Wikipedia](https://www.wikipedia.org/) | `search_web` lookups | CC BY-SA 4.0 — extracts are shown with the article name and a link |
+| [Wikipedia](https://www.wikipedia.org/) | `search_wikipedia` lookups | CC BY-SA 4.0 — extracts are shown with the article name and a link |
 | BBC World, NPR, Ars Technica RSS | daily headlines | Feed metadata only (headline, the feed's own summary, link). No article text is fetched or stored. |
+| [Ollama web search](https://ollama.com/) | `search_web` lookups | Hosted API, used only with the user's own key. Results are shown with their titles and links. |
 
-Fennel makes no network request unless the user turns one of these on.
+Fennel makes no network request unless the user turns one of these on, and the
+Ollama key is supplied by the user and stored in their macOS Keychain — it is
+never written to Fennel's database or bundled with the app.
 
-RSS feeds are read, not redistributed: headlines stay on the user's machine and
-are summarised locally. If Fennel ever republishes feed content, each publisher's
-terms need revisiting — BBC's in particular restrict commercial reuse.
+**On RSS.** Feeds are read, not republished. Headlines and the feeds' own
+summaries stay on the user's machine and are summarised locally by the on-device
+model; no article text is fetched, stored or redistributed, which is what these
+feeds are published for. Republishing feed content would be a different
+arrangement and would need each publisher's terms revisited first — BBC's
+restrict commercial reuse — but Fennel does not do that and has no plans to.
 
 ## Full licence texts
 

@@ -317,6 +317,12 @@ private struct SettingsMenu: View {
                             .foregroundStyle(.tertiary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
+                    // Attribution belongs where the switches are, not only in a
+                    // licences sheet: these are the parties data reaches.
+                    Text("When on, Fennel uses Wikipedia (CC BY-SA), Open-Meteo (CC BY 4.0), BBC/NPR/Ars Technica feeds, and Ollama for web search.")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.tertiary)
+                        .fixedSize(horizontal: false, vertical: true)
                     Button("Licences") { showLicenses = true }
                         .buttonStyle(.link)
                         .font(.system(size: 10))
@@ -350,7 +356,7 @@ private struct SettingsMenu: View {
                 toggleRow("Look things up", isOn: Binding(
                     get: { chat.lookups },
                     set: { chat.lookups = $0; chat.saveSettings() }),
-                    note: "Lets Fennel search Wikipedia when it doesn't know something. Free, no account. Your search terms are sent to Wikipedia; nothing else is.")
+                    note: "Lets Fennel look things up when it doesn't know something. Free, and it sends your search terms — and nothing else — to Wikipedia.")
 
                 if chat.lookups { webSearchKey }
             }
@@ -378,11 +384,11 @@ private struct SettingsMenu: View {
                       systemImage: "clock.badge.exclamationmark")
                     .font(.system(size: 10)).foregroundStyle(.orange)
             } else if chat.hasWebKey {
-                Label("Live web search on — for news, prices and anything recent.",
+                Label("Live web search on — powered by Ollama.",
                       systemImage: "checkmark.circle.fill")
                     .font(.system(size: 10)).foregroundStyle(.green)
             } else {
-                Text("Add a free key from ollama.com to let Fennel search the live web as well. Stored in your Keychain; your searches go to Ollama.")
+                Text("Allows Fennel to perform live web searches with your own Ollama key — stored in your Keychain, never in its database. Free key from ollama.com/settings/keys.")
                     .font(.system(size: 10)).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
