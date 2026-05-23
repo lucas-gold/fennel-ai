@@ -1,15 +1,12 @@
 # Fennel
 
 A local speech-to-speech companion for Apple Silicon Macs. Text or voice,
-running entirely on-device. No API key, no account, no network after the
-first model download. Ships as a paid, direct-download Mac app.
+running entirely on-device. No account, no network required after the
+first model download. 
 
 ## Architecture — two local processes
 
-Unlike the original design (browser UI + Python), the UI is a **native
-SwiftUI app**. It owns audio I/O and echo cancellation; Python owns all the
-ML. They talk over a local WebSocket — fully offline, nothing leaves the
-machine.
+UI is a **native SwiftUI app**. It owns audio I/O and echo cancellation; Python owns all the ML. They talk over a local WebSocket — fully offline, nothing leaves the machine.
 
 ```
 ┌────────────────────────────┐          ┌─────────────────────────────┐
@@ -45,7 +42,6 @@ Audio out: `>II` header (turn, seq) + int16 PCM at 24 kHz.
 ```
 README.md                  you are here
 docs/DECISIONS.md          why things are the way they are
-docs/ROADMAP.md            staged build order
 backend/                   Python + MLX
   server.py                WebSocket server, model bootstrap
   config.py                tunables + RAM tiering
@@ -54,7 +50,6 @@ backend/                   Python + MLX
   requirements.txt
 app/                       Swift package / Xcode project (SwiftUI)
   Sources/…                audio engine, WS client, home UI, EventKit
-training/                  SEPARATE: Phase-4 LoRA fine-tuning + evals (Python)
 ```
 
 ## Running it
@@ -71,12 +66,6 @@ cd app && swift run                           # SwiftUI app; type to chat locall
 ## Licence
 
 Fennel is **GPL-3.0-or-later** — see `LICENSE`.
-
-That is forced rather than chosen: the speech pipeline links espeak-ng and
-phonemizer-fork, both GPL-3.0, so the combined work must be GPL-3.0 too.
-Everything else Fennel bundles is permissive (Apache-2.0 or MIT). Dropping
-espeak would allow a permissive licence, at the cost of out-of-vocabulary
-words — names especially — being skipped when spoken.
 
 If you distribute a built Fennel.app, you must make this source available to
 whoever receives it (GPL-3.0 §6).
