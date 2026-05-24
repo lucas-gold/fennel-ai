@@ -35,7 +35,7 @@ Audio out: `>II` header (turn, seq) + int16 PCM at 24 kHz.
 ## Platform & distribution
 
 - **Apple Silicon macOS only.** MLX and SwiftUI are both Apple-only.
-- **Direct download only** 
+- **Direct download only.** Developer ID + notarisation; not the App Store.
 
 ## Layout
 
@@ -54,14 +54,63 @@ app/                       Swift package / Xcode project (SwiftUI)
 
 ## Running it
 
+For development, the two processes are started separately:
+
 ```bash
 ./scripts/setup-venv.sh                       # one-time: uv + Python 3.12 + deps
-backend/.venv/bin/python backend/server.py    # loads Qwen (first run downloads ~2.3 GB)
+backend/.venv/bin/python backend/server.py    # loads models (first run downloads ~3.5 GB)
 ```
 Then, in another terminal:
 ```bash
 cd app && swift run                           # SwiftUI app; type to chat locally
 ```
+
+The app falls back to whatever backend is already listening on port 8420, so a
+hand-started server and `swift run` keep working side by side.
+
+## Building the app
+
+`bundle-app.sh` produces a self-contained `Fennel.app` — the Python runtime and
+the backend live inside the bundle and the app starts the backend itself, so
+opening it is the whole install. It also writes a `.dmg` to hand out.
+
+```bash
+./scripts/bundle-app.sh                       # -> dist/Fennel.app + dist/Fennel.dmg
+```
+
+Takes about a minute, most of it copying the 1.4 GB runtime. Two notes:
+
+- **Quit the running app first** (`pkill -f "Fennel.app/Contents/MacOS/Fennel"`),
+  or you will bundle while the old copy still holds files.
+- **The icon is not rebuilt automatically.** After changing the geometry in
+  `FennelMark.swift`, regenerate it from those same coordinates first:
+  ```bash
+  swift scripts/make-icon.swift app/Resources
+  ```
+
+Models are deliberately *not* bundled: they are ~3.5 GB and would more than
+triple the download, so the app fetches them on first launch — after asking.
+
+### Building one other people can open
+
+Ad-hoc signing is the default and is fine locally, but Gatekeeper will refuse it
+on anyone else's Mac. A distributable build needs a Developer ID certificate
+(a paid Apple Developer account) and notarisation:
+
+```bash
+DEVELOPER_ID="Developer ID Application: Your Name (TEAMID)" ./scripts/bundle-app.sh
+./scripts/notarize.sh                         # submits, waits, staples
+```
+
+One-time notarisation setup:
+
+```bash
+xcrun notarytool store-credentials fennel \
+  --apple-id you@example.com --team-id TEAMID --password APP_SPECIFIC_PASSWORD
+```
+
+`bundle-app.sh` prints `NOT distributable yet` whenever it signed ad-hoc, so it
+is always obvious which kind of build you are holding.
 
 ## Licence
 
