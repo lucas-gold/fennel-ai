@@ -35,6 +35,18 @@ _WEATHERY = re.compile(
     r"sunscreen|wear|dress|walk|run|bike|cycle|beach|park|picnic|barbecue|"
     r"bbq|sunrise|sunset|nice out|going out)\b", re.I)
 
+# Questions whose answer changes week to week. Detected here rather than left to
+# the model: tuning the tool description got "what's on tonight" working and left
+# prices and scores still refusing, and each further nudge perturbed something
+# else. A line in the volatile block sits right beside the question and lands.
+_NEEDS_CURRENT = re.compile(
+    r"\b(tonight|today|right now|currently|at the moment|this (?:week|weekend|"
+    r"month|year)|latest|newest|recent|recently|news|headlines|happening|going "
+    r"on|what's on|price|prices|cost|costs|how much is|cheapest|deal|deals|"
+    r"score|scores|won|win|lost|beat|standings|schedule|showtimes|open now|"
+    r"still open|release date|released|out yet|available now|stock|shares|"
+    r"exchange rate|who is the (?:current|new)|202[6-9])\b", re.I)
+
 _SUMMARY_PROMPT = (
     "Summarise this conversation in under 60 words, in the third person, "
     "keeping only what would matter later: decisions, preferences, plans, "
@@ -59,6 +71,12 @@ class Memory:
         self._store = store
         self._retriever = retriever
         self._embedder = embedder
+
+    @property
+    def _web_ready(self) -> bool:
+        """Only nudge toward a tool the model actually has."""
+        return (self._store.setting("lookups", "0") == "1"
+                and bool(self._store.setting("web_key", "")))
 
     def remember(self, session_id: int, role: str, content: str,
                  prompt_text: Optional[str] = None) -> None:
@@ -122,6 +140,10 @@ class Memory:
         # sitting in the context block reads as something worth saying.
         if _WEATHERY.search(user_text) and (w := self._weather_now(now)):
             parts.append(w)
+        if self._web_ready and _NEEDS_CURRENT.search(user_text):
+            parts.append("note: this needs up-to-date information — call "
+                         "search_web and answer from what it returns, rather "
+                         "than from memory or by saying you don't have it")
         for h in self._recall(session_id, user_text):
             who = "they said" if h["role"] == "user" else "you said"
             text = " ".join(h["content"].split())[:160]
