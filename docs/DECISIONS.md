@@ -912,3 +912,32 @@ model at a tool it hasn't been given is how it learns to apologise.
 answers correctly from its own weights, and forcing a lookup would add seconds
 for nothing. The tool is there for when it doesn't know — not to prove it
 consulted something.
+
+---
+
+## D-RESUME — A resumed conversation is a prefill, and silence is not speech
+
+"Hi" took two minutes and the orb read **Speaking** the whole way. Two separate
+bugs behind one symptom.
+
+**Resuming replays the window.** Opening a session rebuilds the prompt from the
+last turns in the database, and that is real prefill work — measured 3,370
+tokens on a one-word greeting, ~18 s at this machine's 187 tok/s, landing on
+whatever the user happens to say first. `LLM.warm()` existed for precisely this
+and had never been called; it now runs in the lull between the window appearing
+and the user speaking, and cancels if they get there first.
+
+| first turn of a resumed chat | prefill |
+|---|---|
+| before | 3,370 tokens |
+| after  | **110 tokens** |
+
+**The state was a lie.** `speaking` was sent before the LLM pass, so the orb
+claimed to be speaking through prefill *and* generation. That is why it read as
+frozen rather than slow: an honest "thinking" for 18 s is a wait, but "speaking"
+with no sound is a bug. It is now emitted by the code that ships the first audio
+clause — measured at −0.00 s relative to the first frame.
+
+The general rule: **a status must be produced by the thing it claims**, not by
+the intention to do it. Anything else eventually describes a state the app is
+not in.

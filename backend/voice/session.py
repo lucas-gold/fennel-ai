@@ -95,6 +95,7 @@ class Session:
         self._session_id: int = 0
         self._messages: list[dict] = [{"role": "system", "content": self._system}]
         self._summary_task: Optional[asyncio.Task] = None
+        self._warm_task: Optional[asyncio.Task] = None
         self._epoch = 0
         self._turn_no = 0
         self._turn_task: Optional[asyncio.Task] = None
@@ -140,6 +141,14 @@ class Session:
             "session_opened", id=self._session_id,
             messages=[{"role": r["role"], "text": r["content"]} for r in rows]))
         await self.send_sessions()
+
+        # Resuming replays the verbatim window, and that is a real prefill —
+        # measured 3,370 tokens (~18 s here) landing on whatever the user says
+        # first, with the orb claiming to speak the whole time. Do it now, in the
+        # lull between the window appearing and them saying anything.
+        if len(self._messages) > 1:
+            self._warm_task = asyncio.create_task(
+                asyncio.to_thread(self._llm.warm, list(self._messages)))
 
     async def apply_system(self, system: str) -> None:
         """Adopt a new system prefix (the daily briefing arriving mid-session).
@@ -249,6 +258,8 @@ class Session:
         # than letting it grab the LLM lock ahead of their turn.
         if self._summary_task and not self._summary_task.done():
             self._summary_task.cancel()
+        if self._warm_task and not self._warm_task.done():
+            self._warm_task.cancel()
         await self._supersede()
         self._epoch += 1
         self._stop = threading.Event()
@@ -460,6 +471,9 @@ class Session:
             pcm = await asyncio.to_thread(self._tts.synth_pcm, clause)
             if pcm.size == 0 or not self._live(epoch):
                 return
+            if not announced_speaking[0]:
+                announced_speaking[0] = True
+                await self._send_control(P.encode("state", value="speaking"))
             await self._send_audio(P.pack_audio(turn, seq, pcm))
             now = time.monotonic()
             self._audio_until = max(now, self._audio_until) + len(pcm) / 24000.0
@@ -541,9 +555,12 @@ class Session:
             return ts.raw, calls, said
 
         self._assistant_active = do_speak
-        if do_speak:
-            await self._send_control(P.encode("state", value="speaking"))
+        # "Speaking" is announced by speak_clause when the first audio actually
+        # goes out, not here. Announcing it up front meant the orb read
+        # "Speaking" through the whole prefill and generation — on a resumed
+        # session that is ~18 s of silence labelled as speech.
         visible = ""
+        announced_speaking = [False]   # list so the nested speak_clause can set it
         try:
             for round_ in range(config.LLM_TOOL_ROUNDS + 1):
                 raw, calls, said = await llm_pass()
