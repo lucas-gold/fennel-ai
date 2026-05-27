@@ -879,3 +879,36 @@ actually going out.
 Fennel stores is a preference; a credential belongs somewhere the OS protects
 and not in a database someone might copy or hand over while debugging. The
 backend receives it over loopback and holds it only in memory.
+
+---
+
+## D-CURRENT — Deciding to search is a code decision, not a prompt decision
+
+Asked "what's happening in NYC tonight", the model refused ("I don't have
+real-time event data") until pushed. Asked the same about Toronto, it did
+something worse: it *invented* an evening — "mostly quiet tonight, no major
+events" — with no search behind it, phrased confidently enough to believe.
+
+Tuning the tool description got the two "tonight" phrasings working and left
+prices and scores still refusing; the next nudge would have perturbed something
+else again. Measured on a fresh chat per prompt:
+
+| | description tuning | code gate |
+|---|---|---|
+| should search the web | 2/4 | **4/4** |
+| should use no tool | 2/2 | 2/2 |
+
+So the trigger moved into `Memory.preamble`: a regex for questions whose answer
+changes week to week (tonight, price, score, latest, released, 202x…) adds one
+line to the volatile block telling the model to search. Same shape as the
+weather fix — the reliable place to decide something is code, and the reliable
+place to *say* it is right beside the user's message, not in a system prompt
+2,700 tokens earlier.
+
+The nudge is only added when a web key is actually configured. Pointing the
+model at a tool it hasn't been given is how it learns to apologise.
+
+**Wikipedia deliberately has no such gate.** For "who was Ada Lovelace" the model
+answers correctly from its own weights, and forcing a lookup would add seconds
+for nothing. The tool is there for when it doesn't know — not to prove it
+consulted something.
