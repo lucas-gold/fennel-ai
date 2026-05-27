@@ -1,12 +1,6 @@
 # Third-party components in Fennel
 
-Fennel itself is licensed **GPL-3.0-or-later** (see `LICENSE`). That choice is
-forced rather than chosen: the speech pipeline links **espeak-ng** and
-**phonemizer-fork**, both GPL-3.0, so the combined work must be GPL-3.0 too.
-Everything else here is permissive and could have gone either way.
-
-Distributing a Fennel binary therefore means making this source available to
-whoever receives it (GPL-3.0 §6).
+Fennel is licensed **GPL-3.0-or-later** (see `LICENSE`). 
 
 ## Models bundled or downloaded on first run
 
@@ -22,16 +16,12 @@ Apache-2.0 requires that its licence text travel with the distribution and that
 modifications be stated. The models are used **as published** — quantised to
 4-bit by mlx-community where noted, not otherwise modified or fine-tuned.
 
-Kokoro's voice packs are worth a second look before any wider release: the model
-is Apache-2.0, but individual voices derive from varied training data. Fennel
-ships `af_heart` only.
-
 ## Libraries
 
 | Component | Licence |
 |---|---|
-| espeak-ng (via `espeakng-loader`) | **GPL-3.0** — the reason Fennel is GPL |
-| `phonemizer-fork` | **GPL-3.0** |
+| espeak-ng (via `espeakng-loader`) | GPL-3.0 |
+| `phonemizer-fork` | GPL-3.0 |
 | `misaki` (Kokoro G2P) | Apache-2.0 |
 | MLX, `mlx-lm`, `mlx-whisper`, `mlx-audio` | MIT |
 | `transformers`, `tokenizers`, `safetensors` | Apache-2.0 |
@@ -53,12 +43,8 @@ Fennel makes no network request unless the user turns one of these on, and the
 Ollama key is supplied by the user and stored in their macOS Keychain — it is
 never written to Fennel's database or bundled with the app.
 
-**On RSS.** Feeds are read, not republished. Headlines and the feeds' own
-summaries stay on the user's machine and are summarised locally by the on-device
-model; no article text is fetched, stored or redistributed, which is what these
-feeds are published for. Republishing feed content would be a different
-arrangement and would need each publisher's terms revisited first — BBC's
-restrict commercial reuse — but Fennel does not do that and has no plans to.
+**On RSS.** Feeds are read, not republished or redistributed. Headlines and the feeds' own summaries stay on the user's machine and are summarised locally by the on-device
+model.
 
 ## Full licence texts
 
