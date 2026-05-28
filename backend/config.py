@@ -61,6 +61,12 @@ LLM_SYSTEM = (
     "Follow the thread rather than closing it off; ending every turn with 'let "
     "me know if you need anything else' is a way of not talking to someone. "
     "Vary your openers instead of reaching for the same one each time.\n"
+    "When you draft something for the user to send or keep — an email, a "
+    "message, a note — write only what they actually told you. Do not invent "
+    "details, offers or pleasantries they never mentioned, and do not wish "
+    "anyone well for something they are not doing. A short accurate draft beats "
+    "a warm padded one, and the padding is where the mistakes live. Avoid em "
+    "dashes there.\n"
     "Emoji rarely, and at most one — they are silent when read aloud, and one "
     "in every reply reads as a tic. Vary which one; never lean on a favourite."
 )
@@ -73,6 +79,12 @@ LLM_MAX_TOKENS = MAX_TOKENS
 # tool-call JSON, and cross-turn repetition is a greedy problem, not a loop.
 LLM_TEMP = 0.7
 LLM_TOP_P = 0.92
+# Drafting is the one task where 0.7 measurably hurts. Asked to write the same
+# email twice at 0.7, one sample wished the *recipient* well at a wedding the
+# sender was attending; at 0.3 neither sample lost the premise. Conversation
+# keeps the higher temperature — dropping it globally is what made replies
+# repetitive in the first place.
+LLM_DRAFT_TEMP = 0.3
 
 # ── Tool calling / home screen (Stage 3) ───────────────────────────────────
 # How many times a turn may go LLM → tool → LLM before we force a plain reply.

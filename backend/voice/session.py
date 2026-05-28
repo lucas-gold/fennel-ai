@@ -46,6 +46,14 @@ LEAD_INS = {
     "agenda": "Let me check.",
 }
 
+# A request to write something the user will send or keep. Drafting is the one
+# task where conversational temperature measurably hurts: the padding a warm
+# sampler adds is exactly where the invented details live (D-DRAFT).
+_DRAFTY = re.compile(
+    r"\b(write|draft|compose|reword|rewrite|edit|proofread)\b[^.?!]{0,40}?"
+    r"\b(email|e-mail|message|note|letter|text|reply|response|memo|post|"
+    r"caption|bio|invitation|invite|thank[- ]?you)\b", re.I)
+
 # Unicode symbol/pictograph ranges plus the joiners that compose them.
 _EMOJI = re.compile("[\U0001F300-\U0001FAFF\u2600-\u27BF\uFE0F\u200D]")
 
@@ -522,7 +530,8 @@ class Session:
                 if do_speak:
                     await speak_clause(text)
 
-            async for chunk in self._llm.astream(self._messages, stop=self._stop):
+            async for chunk in self._llm.astream(self._messages, stop=self._stop,
+                                                 temp=draft_temp):
                 if not self._live(epoch):
                     break
                 prose, new_calls = ts.feed(chunk)
@@ -561,6 +570,9 @@ class Session:
         # session that is ~18 s of silence labelled as speech.
         visible = ""
         announced_speaking = [False]   # list so the nested speak_clause can set it
+        draft_temp = config.LLM_DRAFT_TEMP if _DRAFTY.search(text) else None
+        if draft_temp is not None:
+            print(f"[llm] drafting turn: temp={draft_temp}", flush=True)
         try:
             for round_ in range(config.LLM_TOOL_ROUNDS + 1):
                 raw, calls, said = await llm_pass()

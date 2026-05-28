@@ -217,8 +217,15 @@ class LLM:
             self._cached_ids = ids
         print(f"[llm] warmed {len(delta)} tokens during idle", flush=True)
 
-    def stream_reply(self, messages: list[Message]) -> Iterator[str]:
-        """Blocking generator of text chunks; reuses the KV prefix (D4)."""
+    def stream_reply(self, messages: list[Message],
+                     temp: Optional[float] = None) -> Iterator[str]:
+        """Blocking generator of text chunks; reuses the KV prefix (D4).
+
+        `temp` overrides the conversational sampler for one turn — drafting
+        wants a steadier hand than chat does.
+        """
+        sampler = (self._sampler if temp is None
+                   else make_sampler(temp=temp, top_p=config.LLM_TOP_P))
         prompt_ids = self._prompt_ids(messages)
         # The lock is held for the whole generation — acquired on the first
         # next(), released when the generator finishes or is closed by barge-in —
@@ -242,7 +249,7 @@ class LLM:
                 for resp in stream_generate(
                     self.model, self.tokenizer, prompt=delta,
                     max_tokens=config.LLM_MAX_TOKENS, prompt_cache=self._cache,
-                    sampler=self._sampler,
+                    sampler=sampler,
                 ):
                     generated.append(resp.token)
                     if resp.text:
@@ -259,7 +266,8 @@ class LLM:
                     self.reset()
 
     async def astream(self, messages: list[Message],
-                      stop: Optional["threading.Event"] = None) -> AsyncIterator[str]:
+                      stop: Optional["threading.Event"] = None,
+                      temp: Optional[float] = None) -> AsyncIterator[str]:
         """Async wrapper: run the blocking generator off the event loop and
         deliver chunks as they arrive (never block audio delivery — CLAUDE.md).
         If `stop` is set (barge-in) we stop pulling and close the generator, which
@@ -268,7 +276,7 @@ class LLM:
         queue: asyncio.Queue = asyncio.Queue()
 
         def worker() -> None:
-            gen = self.stream_reply(messages)
+            gen = self.stream_reply(messages, temp=temp)
             try:
                 for chunk in gen:
                     if stop is not None and stop.is_set():
