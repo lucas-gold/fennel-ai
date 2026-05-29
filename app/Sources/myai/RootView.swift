@@ -520,10 +520,27 @@ private struct ChatPanel: View {
 private struct MessageRow: View {
     let message: ChatMessage
 
+    /// Render the model's markdown rather than printing its asterisks.
+    ///
+    /// `inlineOnlyPreservingWhitespace` is the important part: the default
+    /// parser collapses newlines, which turns a list into one run-on line.
+    /// Partial markdown arrives constantly while streaming — `**bol` — and that
+    /// simply renders literally until the closing pair lands, so no special
+    /// casing is needed for it. Speech is unaffected: `speakable()` strips the
+    /// same syntax before Kokoro ever sees it.
+    private var rendered: AttributedString {
+        let options = AttributedString.MarkdownParsingOptions(
+            allowsExtendedAttributes: false,
+            interpretedSyntax: .inlineOnlyPreservingWhitespace,
+            failurePolicy: .returnPartiallyParsedIfPossible)
+        return (try? AttributedString(markdown: message.text, options: options))
+            ?? AttributedString(message.text)
+    }
+
     var body: some View {
         HStack {
             if message.role == .user { Spacer(minLength: 60) }
-            Text(message.text)
+            Text(rendered)
                 .font(.system(size: 13))
                 .lineSpacing(2.5)
                 .textSelection(.enabled)
