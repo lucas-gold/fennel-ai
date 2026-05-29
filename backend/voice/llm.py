@@ -38,6 +38,15 @@ def _common_prefix(a: list[int], b: list[int]) -> int:
 
 class LLM:
     def __init__(self, model_id: str = config.LLM_MODEL) -> None:
+        # Bound MLX's buffer cache before anything allocates.
+        #
+        # MLX keeps freed GPU buffers around to avoid re-allocating, and by
+        # default that pool grows without limit: measured 3.96 GB of cache
+        # against 2.91 GB of live weights while priming — ~6.9 GB from MLX alone
+        # on a 16 GB machine, which is how a 3.5 GB app ends up swapping. The
+        # cache only ever saves an allocation, so capping it costs a little
+        # speed and buys back gigabytes.
+        mx.set_cache_limit(config.MLX_CACHE_LIMIT_BYTES)
         self.model, self.tokenizer = load(model_id)
         self._cache = make_prompt_cache(self.model)
         self._cached_ids: list[int] = []
@@ -111,6 +120,7 @@ class LLM:
                         self._cache = restored
                         self._cached_ids = probe[:n]
                         self._prime_len = n
+                        mx.clear_cache()
                         print(f"[llm] restored {n} primed tokens from cache",
                               flush=True)
                         return
@@ -130,6 +140,7 @@ class LLM:
             self._cached_ids = probe[:n]
             self._prime_len = n
             self._save_prime_cache(path, n)
+            mx.clear_cache()      # a one-off spike; don't hold it for the session
         print(f"[llm] primed {n} prefix tokens", flush=True)
 
     def _save_prime_cache(self, path: str, n: int) -> None:
@@ -215,6 +226,7 @@ class LLM:
             self.model(arr[None], cache=self._cache)
             mx.eval([c.state for c in self._cache])
             self._cached_ids = ids
+            mx.clear_cache()
         print(f"[llm] warmed {len(delta)} tokens during idle", flush=True)
 
     def stream_reply(self, messages: list[Message],
