@@ -132,14 +132,26 @@ struct HomeCard: Identifiable {
             }
         case .search:
             let hits = args["results"] as? [[String: Any]] ?? []
+            let names = hits.compactMap { $0["title"] as? String }
             // The query leads, not the top hit. Wikipedia's first result isn't
             // always the one the reply drew on, and showing only that made the
             // card look confidently wrong ("My Bed" for a question about beds).
             title = args["query"] as? String ?? "Search"
-            let src = args["source"] as? String ?? "Wikipedia"
-            subtitle = src + " · " + hits.compactMap { $0["title"] as? String }
-                .joined(separator: ", ")
+            searchSource = args["source"] as? String ?? "Wikipedia"
+            // Just the source and a count. Joining every result title made the
+            // subheading longer than the card — a web search returns five.
+            subtitle = names.count > 1
+                ? "\(searchSource) · \(names.count) results"
+                : searchSource
             body = hits.first?["extract"] as? String
+            // Web result titles run long ("… | CoinMarketCap"), so the other
+            // hits are listed short — enough to see what was found without the
+            // card turning into a wall of headlines.
+            items = names.count > 1
+                ? names.dropFirst().prefix(3).map {
+                    $0.count > 58 ? String($0.prefix(56)) + "…" : $0
+                  }
+                : []
             searchLink = (hits.first?["link"] as? String).flatMap(URL.init(string:))
             status = .done
         }
@@ -147,6 +159,9 @@ struct HomeCard: Identifiable {
 
     /// Article link for a `.search` card, shown as a "Read more" button.
     var searchLink: URL?
+    /// Which source answered — the link label said "Wikipedia" even for a web
+    /// search, which was simply untrue about where the button went.
+    var searchSource = "Wikipedia"
 
     /// When a `.timer` card fires. The countdown is drawn from this rather than
     /// ticked in the model, so it stays correct if the app is busy.
@@ -233,7 +248,9 @@ struct HomeCardView: View {
                 if card.kind == .song { musicButtons }
                 if card.kind == .timer, let ends = card.endsAt { CountdownLabel(ends: ends) }
                 if card.kind == .search, let url = card.searchLink {
-                    Link("Read on Wikipedia", destination: url)
+                    Link(card.searchSource == "Wikipedia"
+                         ? "Read on Wikipedia"
+                         : "Open \(url.host ?? "source")", destination: url)
                         .font(.caption2.weight(.medium)).padding(.top, 4)
                 }
                 if card.kind == .link, let url = URL(string: card.args["url"] as? String ?? "") {
