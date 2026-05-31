@@ -1044,3 +1044,17 @@ so ordinary prose containing a brace is never swallowed.
 The pattern, third time now (emoji, drafting, this): **for a 4B model, a rule
 that must not be broken belongs in code.** The prompt reduces how often it
 happens; the code decides whether the user ever sees it.
+
+**The follow-up matters more than the fix.** The JSON guard worked first try,
+but the invented power did not go away — next attempt it said "I'll set the room
+lighting to soft for you", which is worse, because it claims an action rather
+than an ability. The reason: the correction was written inside
+`create_shortcut`'s description, and a user asking "can you change the lighting
+in my room" gives the model no reason to consult one tool's schema.
+
+What a thing *is* belongs in the system prompt, not in a footnote to one of its
+tools. The persona now states the boundary directly — software on a Mac, no
+lights, plugs, thermostats, TVs, speakers, no camera, and never claim to have
+changed anything physical. Measured across five phrasings (room lighting, the
+lights, temperature, the TV, "can you see me"): **5/5 declined cleanly**, with
+`set_timer` and `set_reminder` still firing normally.
