@@ -69,6 +69,8 @@ struct HomeCard: Identifiable {
     var body: String?
     var items: [String] = []
     var status: Status = .working
+    /// Where this sits in the transcript, shared with messages.
+    var seq: Int = 0
     /// The EventKit identifier once written, so ✕ can remove the real entry.
     var externalID: String?
     /// The normalized tool arguments, kept so Undo can re-create the entry.
