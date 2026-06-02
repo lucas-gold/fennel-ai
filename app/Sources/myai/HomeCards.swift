@@ -214,24 +214,26 @@ struct HomeCardView: View {
     }
 
     private var full: some View {
-        HStack(alignment: .top, spacing: 10) {
+        HStack(alignment: .top, spacing: 12) {
+            // The colour lives in the glyph, not behind it. A filled disc made
+            // every card shout for attention in a column of quiet bubbles.
             Image(systemName: card.kind.icon)
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(.white)
-                .frame(width: 22, height: 22)
-                .background(Circle().fill(card.kind.tint.gradient))
+                .font(.system(size: 15, weight: .medium))
+                .foregroundStyle(card.kind.tint)
+                .frame(width: 20)
+                .padding(.top, 1)
 
             VStack(alignment: .leading, spacing: 3) {
                 Text(card.title)
-                    .font(.system(size: 12.5, weight: .semibold))
+                    .font(.system(size: 14, weight: .semibold))
                     .fixedSize(horizontal: false, vertical: true)
                 if let subtitle = card.subtitle {
-                    Text(subtitle).font(.system(size: 11)).foregroundStyle(.secondary)
+                    Text(subtitle).font(.system(size: 12.5)).foregroundStyle(.secondary)
                 }
                 if let body = card.body, !body.isEmpty {
                     Text(body)
-                        .font(.system(size: 11)).foregroundStyle(.secondary)
-                        .lineSpacing(1.5)
+                        .font(.system(size: 12.5)).foregroundStyle(.secondary)
+                        .lineSpacing(2)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 if !card.items.isEmpty {
@@ -277,9 +279,10 @@ struct HomeCardView: View {
             .buttonStyle(.plain)
             .help(card.kind.writesToEventKit ? "Delete" : "Dismiss")
         }
-        .padding(11)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 13)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .cardSurface(tint: card.kind.tint)
+        .cardSurface()
         .transition(.move(edge: .top).combined(with: .opacity))
     }
 
