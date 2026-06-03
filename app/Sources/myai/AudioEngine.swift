@@ -23,6 +23,13 @@ final class AudioEngine {
     private var mode: Mode = .off
     private var wantMic = false
     private var micGranted = false
+    /// Hardware echo cancellation. Off by default because it cannot be had
+    /// without ducking: `AVAudioVoiceProcessingOtherAudioDuckingLevel` offers
+    /// Default/Min/Mid/Max and no "off", so enabling voice processing always
+    /// quiets whatever else you're listening to. Fennel still rejects its own
+    /// voice in software — a stricter barge-in gate while it speaks, plus a
+    /// transcript check — so this is the belt rather than the braces.
+    var echoCancellation = UserDefaults.standard.bool(forKey: "echoCancellation")
     private var queued = 0                // clauses still scheduled on the player
 
     private var engine = AVAudioEngine()
@@ -63,15 +70,14 @@ final class AudioEngine {
             engine = AVAudioEngine()
             player = AVAudioPlayerNode()
             if mic {
-                try engine.inputNode.setVoiceProcessingEnabled(true)
-                // Voice processing ducks everything else on the system by
-                // default, which silences the user's music the moment Fennel
-                // opens. Echo cancellation still works without it; whether the
-                // room is quiet enough is the user's call, not ours.
-                if #available(macOS 14.0, *) {
-                    engine.inputNode.voiceProcessingOtherAudioDuckingConfiguration =
-                        AVAudioVoiceProcessingOtherAudioDuckingConfiguration(
-                            enableAdvancedDucking: false, duckingLevel: .min)
+                if echoCancellation {
+                    try engine.inputNode.setVoiceProcessingEnabled(true)
+                    if #available(macOS 14.0, *) {
+                        // Least available, but not none — see `echoCancellation`.
+                        engine.inputNode.voiceProcessingOtherAudioDuckingConfiguration =
+                            AVAudioVoiceProcessingOtherAudioDuckingConfiguration(
+                                enableAdvancedDucking: false, duckingLevel: .min)
+                    }
                 }
                 let inFormat = engine.inputNode.outputFormat(forBus: 0)
                 // Voice processing inflates the mono mic to a 7-channel stream and

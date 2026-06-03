@@ -225,14 +225,14 @@ struct HomeCardView: View {
 
             VStack(alignment: .leading, spacing: 3) {
                 Text(card.title)
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(.system(size: 13, weight: .semibold))
                     .fixedSize(horizontal: false, vertical: true)
                 if let subtitle = card.subtitle {
-                    Text(subtitle).font(.system(size: 12.5)).foregroundStyle(.secondary)
+                    Text(subtitle).font(.system(size: 11.5)).foregroundStyle(.secondary)
                 }
                 if let body = card.body, !body.isEmpty {
                     Text(body)
-                        .font(.system(size: 12.5)).foregroundStyle(.secondary)
+                        .font(.system(size: 11.5)).foregroundStyle(.secondary)
                         .lineSpacing(2)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -279,8 +279,8 @@ struct HomeCardView: View {
             .buttonStyle(.plain)
             .help(card.kind.writesToEventKit ? "Delete" : "Dismiss")
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 13)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 11)
         .frame(maxWidth: .infinity, alignment: .leading)
         .cardSurface()
         .transition(.move(edge: .top).combined(with: .opacity))
