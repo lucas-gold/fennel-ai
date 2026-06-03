@@ -941,3 +941,40 @@ clause — measured at −0.00 s relative to the first frame.
 The general rule: **a status must be produced by the thing it claims**, not by
 the intention to do it. Anything else eventually describes a state the app is
 not in.
+
+---
+
+## D-DRAFT — Drafting is not conversation, and wants a different temperature
+
+Asked to write an email declining to cat-sit because of a wedding, Fennel
+produced a second paragraph that wished *Jane* well at the wedding and offered
+to send photos of a cat it had just said it could not watch. The premise
+survived one paragraph and then dissolved.
+
+Reproduced rather than guessed. Same request, two samples per condition:
+
+| condition | coherent | length | em dashes |
+|---|---|---|---|
+| current prompt, temp 0.7 | 1 of 2 — one reproduced the exact error | 126–142 w | 2 |
+| + "write only what they told you" | 2 of 2, one still padded | 92–137 w | 1 |
+| + that prompt at temp 0.3 | 2 of 2 | 122–133 w | 1 |
+
+Two things follow.
+
+**The mistakes live in the padding.** Every invented detail — the photos, the
+misplaced good wishes — appeared in sentences the user never asked for. An
+instruction to write only what they actually said removes the sentences, and the
+errors go with them.
+
+**A temperature that suits conversation does not suit drafting.** 0.7 is what
+keeps replies from sounding canned (D-SAMPLING) and it is also what lets the
+premise drift, so it is chosen per turn: a regex recognises a request to write
+something the user will send, and that turn alone samples at 0.3. Verified
+through the real pipeline — three drafts, all coherent, 76–86 words against
+126–142 before — with a control turn confirming ordinary chat is still warm.
+
+What this does **not** fix: a 4-bit 4B model holding a premise across long-form
+text is weak in a way no prompt repairs. This moved it from "often wrong" to
+"usually right, and much shorter". Drafting is where a bigger model would earn
+its latency, and that is not a trade worth making for an app whose product is
+speech.
