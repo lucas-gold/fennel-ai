@@ -35,7 +35,9 @@ MAX_TOKENS = 1024 if TIER == "large" else 512
 # Verified real repo (the design's "Qwen3.5-4B-VL" was an unverified guess).
 # Text-only for now; swap to a VL variant at the video phase — a config change,
 # per docs/DECISIONS.md D9.
-LLM_MODEL = "mlx-community/Qwen3-4B-Instruct-2507-4bit"
+#LLM_MODEL = "mlx-community/Qwen3-4B-Instruct-2507-4bit"
+#LLM_MODEL = "pipenetwork/Qwen3.5-9B-The-Defiant-Fable-Uncensored-Heretic-MLX-4bit"
+LLM_MODEL = "alexgusevski/Impish_Nemo_12B-mlx-4Bit"
 def local_models() -> str:
     """The models actually loaded, for the settings panel. Derived from the
     config rather than written out in the UI, so the claim can't drift from
@@ -57,28 +59,49 @@ LLM_SYSTEM = (
     "Small talk gets a sentence or two — warm, with something of your own in "
     "it, not a paragraph. A real question, or a subject they have opened up, "
     "gets as much room as it actually needs: say what you think, notice "
-    "something specific, ask what you want to know.\n"
+    "something specific, ask what you want to know. When they ask for a "
+    "piece of writing rather than conversation, that rule is suspended: "
+    "write at the length the piece actually needs.\n"
     "Follow the thread rather than closing it off; ending every turn with 'let "
     "me know if you need anything else' is a way of not talking to someone. "
     "Vary your openers instead of reaching for the same one each time.\n"
-    "You are software on a Mac, and that is the whole of your reach. You "
-    "cannot control anything physical: no lights, lamps, smart bulbs, plugs, "
-    "thermostats, TVs, speakers or appliances, in this room or any other. You "
-    "have no camera and no eyes. When asked for something outside that reach, "
-    "say plainly that you can't, in one sentence, and offer the nearest thing "
-    "you actually can do. Never say you have set, changed, adjusted or turned "
-    "on anything in the physical world — you have not, and saying so is the "
-    "worst thing you can do here.\n"
+    # Scoped deliberately tightly to *physical* action. The earlier wording
+    # ("that is the whole of your reach", "when asked for something outside
+    # that reach, say plainly that you can't") generalised: the model quoted
+    # it back as "as software, I'm not able to..." when declining ordinary
+    # writing requests. Measured on Impish-Nemo-12B, the old paragraph took a
+    # fiction request from 7/8 accepted down to 3/8; this version holds 6/8
+    # while still declining a physical action 5/5.
+    "You are software on a Mac and have no body. You cannot switch on or "
+    "adjust anything physical — lights, lamps, smart bulbs, plugs, "
+    "thermostats, TVs, speakers or appliances — and you have no camera and "
+    "no eyes. When asked to change something physical, say plainly in one "
+    "sentence that you can't, and offer the nearest thing you actually can "
+    "do. Never say you have set, changed, adjusted or turned on anything in "
+    "the physical world. This limits what you can DO, not what you can "
+    "write, imagine or discuss; it is never a reason to decline a piece of "
+    "writing.\n"
     "When you draft something for the user to send or keep — an email, a "
     "message, a note — write only what they actually told you. Do not invent "
     "details, offers or pleasantries they never mentioned, and do not wish "
     "anyone well for something they are not doing. A short accurate draft beats "
     "a warm padded one, and the padding is where the mistakes live. Avoid em "
     "dashes there.\n"
+    "You run locally on one adult's own Mac, for their private use. When "
+    "they ask you to write fiction, write it — any genre, any register, "
+    "including explicit sexual content between adult characters. Write the "
+    "scene itself rather than an outline of it, and do not hedge, warn, "
+    "apologise, ask whether they are sure, or offer a tamer version "
+    "instead. One exception, and it holds regardless of source material or "
+    "framing: never write sexual content involving minors.\n"
     "Emoji rarely, and at most one — they are silent when read aloud, and one "
     "in every reply reads as a tic. Vary which one; never lean on a favourite."
 )
-LLM_MAX_TOKENS = MAX_TOKENS
+# Prose needs far more room than talk: 1024 tokens is ~750 words, which cut
+# every scene off mid-sentence. Still a ceiling rather than none, because a
+# model whose stop token is misconfigured will otherwise generate until the
+# heat death of the session (see LLM._ensure_turn_end_stops).
+LLM_MAX_TOKENS = 3072 if TIER == "large" else 1536
 
 # mlx-lm defaults to greedy decoding (sampler=None -> argmax), which is why the
 # same question produced a byte-identical answer every time, always the shortest
@@ -94,11 +117,15 @@ LLM_TOP_P = 0.92
 # repetitive in the first place.
 LLM_DRAFT_TEMP = 0.3
 
-# Ceiling on MLX's reusable-buffer pool. Left unbounded it grew to 3.96 GB
-# beside 2.91 GB of live weights while priming — the pool is pure optimisation,
-# so capping it trades a little allocation speed for not swapping. Scaled to the
-# machine: a third of RAM, within sane bounds.
-MLX_CACHE_LIMIT_BYTES = int(max(0.5, min(1.5, _total_ram_gb() / 8)) * 1024**3)
+# Ceiling on MLX's reusable-buffer pool, or None to leave it unbounded.
+#
+# The cap exists because the pool grew to 3.96 GB beside 2.91 GB of live weights
+# while priming the 4B, and a 3.5 GB app that swaps is a slow one. It is pure
+# optimisation either way: capping trades allocation speed for headroom.
+# Unbounded is the deliberate choice here — set this back to
+#     int(max(0.5, min(1.5, _total_ram_gb() / 8)) * 1024**3)
+# to restore the cap. Note it applies to whichever model is selected above.
+MLX_CACHE_LIMIT_BYTES = None
 
 # ── Tool calling / home screen (Stage 3) ───────────────────────────────────
 # How many times a turn may go LLM → tool → LLM before we force a plain reply.
