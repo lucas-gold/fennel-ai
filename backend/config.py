@@ -86,6 +86,12 @@ LLM_TOP_P = 0.92
 # repetitive in the first place.
 LLM_DRAFT_TEMP = 0.3
 
+# Ceiling on MLX's reusable-buffer pool. Left unbounded it grew to 3.96 GB
+# beside 2.91 GB of live weights while priming — the pool is pure optimisation,
+# so capping it trades a little allocation speed for not swapping. Scaled to the
+# machine: a third of RAM, within sane bounds.
+MLX_CACHE_LIMIT_BYTES = int(max(0.5, min(1.5, _total_ram_gb() / 8)) * 1024**3)
+
 # ── Tool calling / home screen (Stage 3) ───────────────────────────────────
 # How many times a turn may go LLM → tool → LLM before we force a plain reply.
 # 2 covers "remind me X and put Y on my calendar"; more invites runaway loops.

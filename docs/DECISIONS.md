@@ -978,3 +978,39 @@ text is weak in a way no prompt repairs. This moved it from "often wrong" to
 "usually right, and much shorter". Drafting is where a bigger model would earn
 its latency, and that is not a trade worth making for an app whose product is
 speech.
+
+---
+
+## D-MLXCACHE — Cap the buffer pool, or a 3.5 GB app swaps a 16 GB machine
+
+Reported: the app peaked around 17.5 GB and a reply took ~30 s. The models total
+~3.5 GB, so that needed explaining rather than excusing.
+
+Measured through startup, a turn, and the prime path:
+
+| stage | live weights | MLX buffer cache |
+|---|---|---|
+| models loaded | 2.26 GB | 0.00 GB |
+| after prime (compute + save) | 2.91 GB | **3.96 GB** |
+
+MLX keeps freed GPU buffers in a pool so it can hand them back without
+re-allocating, and by default that pool has no ceiling. Priming a ~4,100-token
+prefix and serialising the 614 MB result churns enough buffers to leave nearly
+4 GB parked in it — memory that is not in use and will not be returned. Add the
+weights and it is ~6.9 GB retained on a machine with 16 GB, which is how an app
+that needs 3.5 GB ends up thrashing swap, and why the reply took 30 s.
+
+Two changes: the pool is capped at a third of RAM bounded to 1.5 GB
+(`mx.set_cache_limit`, set before anything allocates), and the one-off spikes —
+prime, restore, warm — call `mx.clear_cache()` when they finish. The pool is
+pure optimisation, so the cost is a few re-allocations and the gain is not
+paging.
+
+After: cache 0.00 GB following prime, 0.02 GB after a turn, ~2.9 GB retained
+instead of ~6.9 GB. Peak during the prime itself is unchanged at 3.5 GB — that
+work is real — but nothing is held afterwards.
+
+Worth stating plainly: this does not by itself account for a 17.5 GB reading,
+which likely also reflects how Activity Monitor counts compressed and swapped
+pages. But ~4 GB of needlessly retained memory on an already-swapping machine is
+a real bug, and it was ours.
