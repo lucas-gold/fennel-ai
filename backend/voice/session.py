@@ -54,6 +54,19 @@ _DRAFTY = re.compile(
     r"\b(email|e-mail|message|note|letter|text|reply|response|memo|post|"
     r"caption|bio|invitation|invite|thank[- ]?you)\b", re.I)
 
+# A reply that announces an action instead of taking it: "let me look that up",
+# "one moment", "I'll check". Harmless when a tool call follows in the same
+# generation; a dead end when none does, and the user is left watching a promise.
+# It happens most with models whose template drops the tool schemas entirely, but
+# any model does it occasionally, so the recovery lives here rather than in the
+# prompt (a rule the model must not break belongs in code).
+_PROMISE = re.compile(
+    r"\b(let me (just |quickly )?(search|look|check|find|see)"
+    r"|i'?ll (search|look|check|find|see|get)"
+    r"|looking (that|it|this) up|searching (the web|for|now)"
+    r"|one (moment|sec|second)|hold on|give me a (sec|second|moment)"
+    r"|checking (that|it|this|now)|let me pull)\b", re.I)
+
 # Unicode symbol/pictograph ranges plus the joiners that compose them.
 _EMOJI = re.compile("[\U0001F300-\U0001FAFF\u2600-\u27BF\uFE0F\u200D]")
 
@@ -573,10 +586,12 @@ class Session:
         draft_temp = config.LLM_DRAFT_TEMP if _DRAFTY.search(text) else None
         if draft_temp is not None:
             print(f"[llm] drafting turn: temp={draft_temp}", flush=True)
+        fired = False
         try:
             for round_ in range(config.LLM_TOOL_ROUNDS + 1):
                 raw, calls, said = await llm_pass()
                 visible += said
+                fired = fired or bool(calls)
                 if not self._live(epoch):
                     break
                 # Store the generation verbatim: re-rendering structured
@@ -601,6 +616,25 @@ class Session:
                 if (not answering and len(said.strip()) >= 15
                         and all(r.get("ok") for r in results)):
                     break
+
+            # Promised but never acted. One rescue round, never a loop: tell it
+            # plainly that nothing was called and make it either call or answer.
+            # Without this the turn ends on "let me search for that" and simply
+            # stops, which reads as the app having hung.
+            if self._live(epoch) and not fired and _PROMISE.search(visible):
+                print("[llm] promise with no tool call — forcing a follow-up",
+                      flush=True)
+                self._messages.append({"role": "tool", "content": json.dumps({
+                    "ok": False,
+                    "error": "You said you would look something up, but no tool "
+                             "was called and nothing ran. Either call the tool "
+                             "now, or answer directly from what you already "
+                             "know. Do not say you are checking or searching "
+                             "again — the user is waiting on an answer."})})
+                raw, _unused, said = await llm_pass()
+                visible += said
+                if self._live(epoch):
+                    self._messages.append({"role": "assistant", "content": raw})
         finally:
             self._assistant_active = False
             if self._live(epoch):

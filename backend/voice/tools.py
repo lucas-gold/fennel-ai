@@ -409,9 +409,43 @@ _STRAY_JSON = re.compile(
     r'\{\s*"(?:type|name)"\s*:\s*"[a-z_]+"[^{}]*\}', re.S)
 
 
+# Stage directions. RP-tuned models narrate in pseudo-tags — <sarcasm>, <laughs>,
+# <whisper> — which are silent nonsense on screen and read aloud verbatim by TTS.
+# They cannot be blanket-stripped: the coding model legitimately writes <div>, and
+# someone may ask what <script> does. So real HTML names are spared, and anything
+# inside a code fence or backticks is never touched at all.
+_HTML_OK = {
+    "a", "abbr", "b", "body", "br", "button", "canvas", "code", "col", "div",
+    "em", "footer", "form", "h1", "h2", "h3", "h4", "h5", "h6", "head", "header",
+    "hr", "html", "i", "iframe", "img", "input", "label", "li", "link", "main",
+    "meta", "nav", "ol", "option", "p", "pre", "s", "script", "section", "select",
+    "small", "span", "strong", "style", "sub", "sup", "svg", "table", "tbody",
+    "td", "textarea", "tfoot", "th", "thead", "title", "tr", "u", "ul", "video",
+}
+_STAGE_TAG = re.compile(r"</?([a-z][a-z0-9_]{1,19})>")
+_CODE_SPAN = re.compile(r"```.*?```|`[^`\n]*`", re.S)
+
+
+def _strip_stage_tags(text: str) -> str:
+    """Drop invented pseudo-tags from prose, leaving code and real HTML alone."""
+    spans = [m.span() for m in _CODE_SPAN.finditer(text)]
+
+    def guarded(m: re.Match) -> str:
+        if any(a <= m.start() < b for a, b in spans):
+            return m.group(0)                      # inside code — hands off
+        if m.group(1) in _HTML_OK:
+            return m.group(0)
+        return ""
+
+    out = _STAGE_TAG.sub(guarded, text)
+    if out != text:
+        print("[tools] dropped stage-direction tags from prose", flush=True)
+    return out
+
+
 def _strip_stray_json(text: str) -> str:
     """Drop tool/step objects the model wrote as prose instead of calling."""
-    cleaned = _STRAY_JSON.sub("", text).replace(_CTX_CLOSE, "")
+    cleaned = _strip_stage_tags(_STRAY_JSON.sub("", text).replace(_CTX_CLOSE, ""))
     if cleaned != text:
         print("[tools] dropped stray JSON from prose", flush=True)
     return re.sub(r"[ \t]{2,}", " ", cleaned)
