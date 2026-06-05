@@ -220,6 +220,13 @@ TOOLS: list[dict] = [
                 "Build a new macOS Shortcut for the user. They review it and "
                 "press Add before it exists, so propose one when they describe "
                 "a routine they'd like to repeat. Each step is {type, value}.\n"
+                "The step types below exist ONLY inside a shortcut you build "
+                "with this tool. They are not things you can do on request: "
+                "set_brightness is the Mac's own display, not room lighting, and "
+                "you cannot control lamps, smart bulbs, speakers or a home "
+                "system. If asked for any of that, say so — you can offer to "
+                "build a shortcut that runs one of their existing Home "
+                "shortcuts, and nothing more.\n"
                 "Step types that DO something: open_app (app name), quit_app, "
                 "run_shortcut (name of one of their existing shortcuts), "
                 "open_url, music (play/pause), next_track, previous_track, "
@@ -230,12 +237,12 @@ TOOLS: list[dict] = [
                 "made only of notifications and waits does nothing useful. These "
                 "are the ONLY step types that exist; if what they want needs "
                 "anything else, tell them that instead of inventing a step.\n"
-                "On/off values are literally \"on\" or \"off\", and must match what "
-                "was asked — \"turn on focus\" is {\"type\":\"set_focus\","
-                "\"value\":\"on\"}. Example: {\"name\":\"Wind Down\",\"steps\":["
-                "{\"type\":\"set_focus\",\"value\":\"on\"},"
-                "{\"type\":\"open_app\",\"value\":\"Music\"},"
-                "{\"type\":\"set_brightness\",\"value\":\"0.2\"}]}"
+                "On/off values are literally \"on\" or \"off\" and must match what "
+                "was asked. A Wind Down shortcut would be steps of set_focus on, "
+                "then open_app Music, then set_brightness 0.2 — passed as this "
+                "tool's arguments. Never write a step out in your reply: steps "
+                "only ever travel inside a tool call, and a user who sees one is "
+                "seeing a bug."
             ),
             "parameters": {
                 "type": "object",
@@ -386,6 +393,22 @@ def _held(buf: str, tag: str) -> int:
     return 0
 
 
+# A bare JSON object in prose that is really a tool call or a shortcut step —
+# `{ "type": "set_brightness", "value": "0.3" }` reached a user's chat and would
+# have been read aloud. Matched on the keys we actually emit, so ordinary prose
+# containing braces is left alone.
+_STRAY_JSON = re.compile(
+    r'\{\s*"(?:type|name)"\s*:\s*"[a-z_]+"[^{}]*\}', re.S)
+
+
+def _strip_stray_json(text: str) -> str:
+    """Drop tool/step objects the model wrote as prose instead of calling."""
+    cleaned = _STRAY_JSON.sub("", text)
+    if cleaned != text:
+        print("[tools] dropped stray JSON from prose", flush=True)
+    return re.sub(r"[ \t]{2,}", " ", cleaned)
+
+
 class ToolStream:
     """Feed streamed chunks; get back only the prose that should be spoken,
     plus any tool calls that completed in this chunk (fired immediately so the
@@ -415,8 +438,18 @@ class ToolStream:
                 if i == -1:
                     # Hold back a partial "<tool_ca…" so it is never spoken.
                     keep = _held(self._buf, _OPEN)
-                    prose.append(self._buf[:len(self._buf) - keep] if keep else self._buf)
+                    out = self._buf[:len(self._buf) - keep] if keep else self._buf
                     self._buf = self._buf[len(self._buf) - keep:] if keep else ""
+                    # Also hold an unterminated "{…" — a stray JSON object can
+                    # only be recognised once its closing brace arrives, and
+                    # emitting the opening half would speak it a character at a
+                    # time. Give up past a sane length so real prose containing
+                    # a brace is never swallowed.
+                    brace = out.rfind("{")
+                    if brace != -1 and "}" not in out[brace:] and len(out) - brace < 200:
+                        self._buf = out[brace:] + self._buf
+                        out = out[:brace]
+                    prose.append(_strip_stray_json(out))
                     break
                 prose.append(self._buf[:i])
                 self._buf = self._buf[i + len(_OPEN):]
@@ -430,7 +463,7 @@ class ToolStream:
             call = _parse_call(body)
             return "", [call] if call else []
         out, self._buf = self._buf, ""
-        return out, []
+        return _strip_stray_json(out), []
 
 
 def _parse_call(body: str) -> Optional[dict]:

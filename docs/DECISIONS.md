@@ -1014,3 +1014,33 @@ Worth stating plainly: this does not by itself account for a 17.5 GB reading,
 which likely also reflects how Activity Monitor counts compressed and swapped
 pages. But ~4 GB of needlessly retained memory on an already-swapping machine is
 a real bug, and it was ours.
+
+---
+
+## D-STRAY — Two failures in one exchange: an invented power, and leaked JSON
+
+A user asked how Fennel was; it offered to "change the room's lighting", then on
+"maybe soft" printed `{ "type": "set_brightness", "value": "0.3" }` into the
+chat — which would also have been read aloud.
+
+**It believed it could dim the room.** `create_shortcut` lists step types
+including `set_brightness` and `set_volume`, and the model read those as things
+it can do on request rather than steps it can *put in a shortcut*. They are also
+the Mac's own display and speakers, not a home system. The description now says
+both, in those words.
+
+**It wrote a step out instead of calling a tool.** The description contained a
+literal `{"type":"set_brightness","value":"0.2"}` as an example — a shape sitting
+in the prompt waiting to be copied into prose. That example is gone, replaced by
+a description of the same shortcut in words.
+
+Neither fix is trusted on its own. `ToolStream` split prose from `<tool_call>`
+blocks and passed everything else straight through, so any JSON the model wrote
+as prose reached the screen and the speaker. It now recognises objects keyed on
+`type` or `name` and drops them, holding an unterminated `{…` the way it already
+holds a partial `<tool_ca…` so a split object is caught too — with a length cap
+so ordinary prose containing a brace is never swallowed.
+
+The pattern, third time now (emoji, drafting, this): **for a 4B model, a rule
+that must not be broken belongs in code.** The prompt reduces how often it
+happens; the code decides whether the user ever sees it.
