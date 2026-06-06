@@ -41,6 +41,68 @@ def _repos() -> list[tuple[str, str, int]]:
     ]
 
 
+def _weights_on_disk() -> dict[str, int]:
+    """repo_id -> bytes of weights actually present.
+
+    Presence in the cache index is not enough: fetching just a repo's config to
+    inspect its chat template registers the repo with no weights behind it, and
+    a picker built on that would offer to open a model it would then have to
+    download. So a repo counts as installed only once real .safetensors files
+    are there — and the size reported is what those files actually occupy.
+    """
+    out: dict[str, int] = {}
+    try:
+        cache = scan_cache_dir()
+    except Exception:
+        return out
+    for repo in cache.repos:
+        total = sum(f.size_on_disk
+                    for rev in repo.revisions for f in rev.files
+                    if f.file_name.endswith(".safetensors"))
+        if total:
+            out[repo.repo_id] = total
+    return out
+
+
+def installed(repo: str) -> bool:
+    """Whether `repo` is genuinely usable offline, weights and all."""
+    return repo in _weights_on_disk()
+
+
+def catalogue() -> list[dict]:
+    """The registry, annotated with what is on disk. Everything the startup
+    picker needs, resolved here so the app holds no model knowledge of its own."""
+    have = _weights_on_disk()
+    return [dict(m, installed=m["id"] in have,
+                 on_disk=have.get(m["id"], 0)) for m in config.MODELS]
+
+
+def delete(repo: str, in_use: Optional[str] = None) -> int:
+    """Remove a downloaded model from the hub cache. Returns bytes freed.
+
+    Refuses to touch anything outside the model registry, and refuses to delete
+    `in_use` — a picker that can delete the model it is about to load is one
+    that can brick the next launch. Before anything is loaded there is no such
+    model, so during the startup picker every row is fair game.
+    """
+    if repo not in {m["id"] for m in config.MODELS}:
+        raise ValueError(f"not a known model: {repo}")
+    if in_use and repo == in_use:
+        raise ValueError("that model is the one in use")
+    try:
+        cache = scan_cache_dir()
+    except Exception as exc:
+        raise RuntimeError(f"couldn't read the model cache: {exc}") from exc
+    hashes = [r.commit_hash for c in cache.repos if c.repo_id == repo
+              for r in c.revisions]
+    if not hashes:
+        return 0
+    freed = sum(c.size_on_disk for c in cache.repos if c.repo_id == repo)
+    cache.delete_revisions(*hashes).execute()
+    print(f"[setup] deleted {repo} ({human(freed)})", flush=True)
+    return freed
+
+
 def _cached_repo_ids() -> set[str]:
     try:
         return {r.repo_id for r in scan_cache_dir().repos}

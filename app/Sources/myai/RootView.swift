@@ -58,7 +58,9 @@ private struct FirstRunOverlay: View {
                            value: breathe)
             content
         }
-        .frame(maxWidth: 420)
+        // The picker needs room for a list; every other phase is a short
+        // paragraph and looks lost at that width.
+        .frame(maxWidth: chat.setupPhase == "choose_model" ? 640 : 420)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(.regularMaterial)
         .transition(.opacity)
@@ -67,6 +69,9 @@ private struct FirstRunOverlay: View {
 
     @ViewBuilder private var content: some View {
         switch chat.setupPhase {
+        case "choose_model":
+            ModelPicker()
+
         case "needs_consent":
             VStack(spacing: 12) {
                 Text("One-time setup").font(Theme.title(16, .semibold))
@@ -507,17 +512,25 @@ private struct ChatPanel: View {
         VStack(spacing: 0) {
             Divider()
             HStack(spacing: 10) {
+                // A rounded rectangle, not a capsule: a capsule's end caps are
+                // half its height, so as the field grew past one line the curve
+                // ate into the text. The cap of 5 lines also cut off a message
+                // still being typed — 14 is roughly a third of the window and
+                // scrolls past that.
                 TextField("Message", text: $draft, axis: .vertical)
                     .textFieldStyle(.plain)
                     .font(.system(size: 13))
-                    .lineLimit(1...5)
+                    .lineLimit(1...14)
                     .focused($focused)
                     .onSubmit(send)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, 14)
                     .padding(.vertical, 9)
-                    .background(Capsule().fill(.background.secondary))
-                    .overlay(Capsule().strokeBorder(
-                        Color.primary.opacity(focused ? 0.16 : 0.08), lineWidth: 1))
+                    .background(RoundedRectangle(cornerRadius: 17, style: .continuous)
+                        .fill(.background.secondary))
+                    .overlay(RoundedRectangle(cornerRadius: 17, style: .continuous)
+                        .strokeBorder(
+                            Color.primary.opacity(focused ? 0.16 : 0.08), lineWidth: 1))
 
                 Button(action: send) {
                     Image(systemName: "arrow.up")
@@ -624,12 +637,20 @@ private struct MessageRow: View {
     }
 
     var body: some View {
-        HStack {
-            if message.role == .user { Spacer(minLength: 70) }
+        HStack(spacing: 0) {
+            if message.role == .user { Spacer(minLength: 28) }
             Text(rendered)
                 .font(.system(size: 13.5))
                 .lineSpacing(3)
                 .textSelection(.enabled)
+                // Cap the measure. A fixed 70pt gutter was the only thing
+                // limiting line length, so on a wide window a paragraph ran the
+                // full column and became unreadable; maxWidth lets short
+                // bubbles keep hugging their text while long ones wrap at a
+                // sane measure. fixedSize stops the last line being clipped
+                // when the row is laid out before its height is known.
+                .frame(maxWidth: 620, alignment: .leading)
+                .fixedSize(horizontal: false, vertical: true)
                 .padding(.horizontal, 15)
                 .padding(.vertical, 11)
                 .background {
@@ -640,7 +661,7 @@ private struct MessageRow: View {
                 }
                 .foregroundStyle(message.role == .user ? AnyShapeStyle(.white)
                                                        : AnyShapeStyle(.primary))
-            if message.role == .assistant { Spacer(minLength: 70) }
+            if message.role == .assistant { Spacer(minLength: 28) }
         }
         .transition(.opacity.combined(with: .move(edge: .bottom)))
     }

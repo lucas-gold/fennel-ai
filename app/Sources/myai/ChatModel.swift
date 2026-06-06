@@ -66,6 +66,11 @@ final class ChatModel: ObservableObject {
     @Published var setupEta = 0.0
     @Published var setupDownloading = false
     @Published var setupLoaded = ""       // "1.2 GB of 3.5 GB in memory"
+    /// The startup model picker, sent by the backend so the app holds no model
+    /// knowledge of its own — add a model to config.MODELS and it appears here.
+    @Published var setupModels: [ModelOption] = []
+    @Published var setupCurrent = ""      // which one is preselected
+    @Published var setupNote = ""         // e.g. why a delete was refused
     /// Set once the backend has sent this session's history, so the window is
     /// never revealed as an empty chat that fills in a moment later.
     @Published var sessionLoaded = false
@@ -189,6 +194,11 @@ final class ChatModel: ObservableObject {
             setupEta = msg["eta"] as? Double ?? setupEta
             setupDownloading = msg["downloading"] as? Bool ?? (setupPhase == "downloading")
             setupLoaded = msg["loaded"] as? String ?? ""
+            if let rows = msg["models"] as? [[String: Any]] {
+                setupModels = rows.compactMap(ModelOption.init(json:))
+            }
+            setupCurrent = msg["current"] as? String ?? setupCurrent
+            setupNote = msg["note"] as? String ?? ""
         case "settings":
             dailyUpdates = msg["daily_updates"] as? Bool ?? false
             location = msg["location"] as? String ?? ""
@@ -230,6 +240,20 @@ final class ChatModel: ObservableObject {
     func allowSetupDownload() {
         setupPhase = "downloading"
         client.send(Wire.encode("setup_consent"))
+    }
+
+    /// Pick a model. The backend downloads it first if it has to, so this is the
+    /// same call whether or not it is already on disk.
+    func chooseModel(_ id: String) {
+        setupPhase = "checking"
+        setupDetail = ""
+        client.send(Wire.encode("model_select", ["id": id]))
+    }
+
+    /// Remove a downloaded model. The backend answers with a fresh catalogue,
+    /// so nothing is guessed here about what is left on disk.
+    func deleteModel(_ id: String) {
+        client.send(Wire.encode("model_delete", ["id": id]))
     }
 
     func newSession()            { client.send(Wire.encode("session_new")) }
