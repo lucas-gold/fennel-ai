@@ -12,6 +12,12 @@ import SwiftUI
 struct ModelPicker: View {
     @EnvironmentObject var chat: ChatModel
 
+    /// Selecting and committing are deliberately two presses. The first press
+    /// only highlights: committing can mean a multi-gigabyte download and
+    /// always means a minute of loading, which is far too much to hang on a
+    /// stray click in a list.
+    @State private var pending: String?
+
     var body: some View {
         VStack(spacing: 14) {
             VStack(spacing: 5) {
@@ -34,7 +40,9 @@ struct ModelPicker: View {
                 .padding(.horizontal, 2)
             }
             .scrollIndicators(.automatic)
-            .frame(maxHeight: 430)
+            .frame(maxHeight: 390)
+
+            confirmBar
 
             Text("Downloaded models live in ~/.cache/huggingface and can be removed here at any time.")
                 .font(.system(size: 10)).foregroundStyle(.tertiary)
@@ -44,8 +52,36 @@ struct ModelPicker: View {
     }
 
     private func row(_ m: ModelOption) -> some View {
-        Button { chat.chooseModel(m.id) } label: { rowBody(m) }
+        Button { pending = m.id } label: { rowBody(m) }
             .buttonStyle(.plain)
+    }
+
+    /// The model the confirm button would open: whatever has been clicked, or
+    /// last launch's choice so the button is useful the moment the list appears.
+    private var chosen: ModelOption? {
+        chat.setupModels.first { $0.id == (pending ?? chat.setupCurrent) }
+    }
+
+    @ViewBuilder private var confirmBar: some View {
+        if let m = chosen {
+            VStack(spacing: 6) {
+                Button {
+                    chat.chooseModel(m.id)
+                } label: {
+                    Text(m.installed ? "Open \(m.name)"
+                                     : "Download \(ModelOption.gb(m.bytes)) and open \(m.name)")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+                .keyboardShortcut(.defaultAction)
+
+                if !m.installed {
+                    Text("Downloads once, then it works offline.")
+                        .font(.system(size: 10)).foregroundStyle(.tertiary)
+                }
+            }
+        }
     }
 
     // Split out of `row` deliberately: as one expression the whole card was too
@@ -73,7 +109,7 @@ struct ModelPicker: View {
     }
 
     private func background(_ m: ModelOption) -> some View {
-        let selected = m.id == chat.setupCurrent
+        let selected = m.id == (pending ?? chat.setupCurrent)
         return RoundedRectangle(cornerRadius: 12, style: .continuous)
             .fill(Theme.bubble)
             .overlay(
@@ -119,9 +155,13 @@ struct ModelPicker: View {
 
     @ViewBuilder private func trailing(_ m: ModelOption) -> some View {
         VStack(spacing: 6) {
-            Image(systemName: "chevron.right")
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(.tertiary)
+            // A tick, not a chevron: pressing a row no longer navigates
+            // anywhere, it just marks which one the button below will open.
+            Image(systemName: m.id == (pending ?? chat.setupCurrent)
+                  ? "checkmark.circle.fill" : "circle")
+                .font(.system(size: 13))
+                .foregroundStyle(m.id == (pending ?? chat.setupCurrent)
+                                 ? Theme.accentSolid : Color.secondary.opacity(0.4))
             if m.installed {
                 Button { chat.deleteModel(m.id) } label: {
                     Image(systemName: "trash")
