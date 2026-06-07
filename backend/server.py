@@ -101,6 +101,9 @@ async def _refresh_briefing(session: Session) -> None:
 # BEFORE the models load so the app can show a consent screen and a progress
 # bar; nothing touches the network until `_consent` is set from the UI.
 _clients: set = set()
+# Live Sessions, so a model swap can repoint them; each holds a direct
+# reference to the LLM it was built with.
+_sessions: set = set()
 _consent = asyncio.Event()
 _ready = asyncio.Event()
 # The startup model picker. Shown every launch, because which model is
@@ -197,6 +200,7 @@ async def handler(ws) -> None:
 
     session = Session(send_control, send_audio, _stt, _llm, _tts,
                       _store, _memory, system=_current_system())
+    _sessions.add(session)
     await ws.send(P.encode("state", value="idle"))
     # Push stored settings immediately. Without this the app boots showing its
     # own defaults (all off) while the backend has them on — and the next Save
@@ -206,7 +210,9 @@ async def handler(ws) -> None:
                            lookups=_store.setting("lookups", "0") == "1",
                            has_web_key=bool(_store.setting("web_key", "")),
                            web_paused=bool(_store.setting("web_quota_hit", "")),
-                           models=config.local_models()))
+                           models=config.local_models(),
+                        model_name=config.model_info(config.LLM_MODEL)["name"],
+                        model_id=config.LLM_MODEL))
     await session.open_session()          # resume where the user left off
     asyncio.create_task(_refresh_briefing(session))  # never blocks the conversation
     try:
@@ -239,7 +245,9 @@ async def handler(ws) -> None:
                         lookups=_store.setting("lookups", "0") == "1",
                         has_web_key=bool(_store.setting("web_key", "")),
                         web_paused=bool(_store.setting("web_quota_hit", "")),
-                        models=config.local_models()))
+                        models=config.local_models(),
+                        model_name=config.model_info(config.LLM_MODEL)["name"],
+                        model_id=config.LLM_MODEL))
                 elif msg["type"] == "session_list":
                     await session.send_sessions()
                 elif msg["type"] == "session_open":
@@ -248,10 +256,34 @@ async def handler(ws) -> None:
                     await session.open_session(create=True)
                 elif msg["type"] == "session_delete":
                     await session.delete_session(int(msg["id"]))
+                elif msg["type"] == "model_select":
+                    # The same frames the startup gate handles, because the
+                    # picker can be reopened from the composer once the app is
+                    # running and its buttons must keep working there too.
+                    global _chosen_model
+                    _chosen_model = str(msg.get("id", ""))
+                    _model_chosen.set()
+                elif msg["type"] == "model_delete":
+                    try:
+                        model_setup.delete(str(msg.get("id", "")),
+                                           in_use=config.LLM_MODEL)
+                        note = ""
+                    except Exception as exc:
+                        note = str(exc)
+                    _set_setup(phase="choose_model",
+                               models=model_setup.catalogue(),
+                               current=config.LLM_MODEL, note=note)
+                elif msg["type"] == "model_reopen":
+                    # Back to the picker without leaving the app. Nothing is
+                    # unloaded yet: choosing the same model again should cost
+                    # nothing at all, so the swap only happens once a different
+                    # one is actually confirmed.
+                    asyncio.create_task(_switch_model())
                 elif msg["type"] == "ping":
                     await ws.send(P.encode("pong"))
     finally:
         _clients.discard(ws)
+        _sessions.discard(session)
         await session.close()
 
 
@@ -307,6 +339,91 @@ async def _watch_parent() -> None:
             os._exit(0)
 
 
+async def _switch_model() -> None:
+    """Reopen the picker mid-session, and swap the model if a different one is
+    chosen.
+
+    Deliberately lazy: the running model stays in memory while the picker is up,
+    so reopening it and choosing the same row costs nothing. Only a genuine
+    change unloads, and it unloads *before* loading the replacement — on a 24 GB
+    machine two sets of weights do not fit at once.
+    """
+    global _llm, _chosen_model, _system, _system_day
+
+    if not _ready.is_set():
+        return                       # already in setup; nothing to reopen
+    was = config.LLM_MODEL
+    _model_chosen.clear()
+    _chosen_model = ""
+    _ready.clear()
+    _set_setup(phase="choose_model", models=model_setup.catalogue(),
+               current=was, note="")
+    await _model_chosen.wait()
+    pick = _chosen_model or was
+
+    if pick == was:
+        print("[setup] same model kept; nothing reloaded", flush=True)
+        _set_setup(phase="ready")
+        return
+
+    config.LLM_MODEL = pick
+    _store.set_setting("llm_model", pick)
+    chosen = config.model_info(pick)
+    print(f"[setup] switching to {chosen['name']} ({pick})", flush=True)
+
+    try:
+        if model_setup.missing():
+            size = model_setup.human(model_setup.total_bytes())
+            _consent.clear()
+            _set_setup(phase="needs_consent", size=size,
+                       detail=f"{chosen['name']} needs downloading first.")
+            await _consent.wait()
+            _set_setup(phase="downloading", progress=0.0, detail="Starting…",
+                       size=size)
+            loop = asyncio.get_running_loop()
+
+            def report(what: str, done: int, total: int) -> None:
+                frac = 0.0 if total <= 0 else min(1.0, done / total)
+                loop.call_soon_threadsafe(partial(
+                    _set_setup, phase="downloading", progress=frac, size=size,
+                    detail=f"Downloading the {what} — "
+                           f"{model_setup.human(done)} of "
+                           f"{model_setup.human(total)}"))
+
+            await asyncio.to_thread(model_setup.download, report)
+
+        # Old weights out before new weights in.
+        _set_setup(phase="loading", detail=f"Unloading {config.model_info(was)['name']}",
+                   loaded="")
+        old, _llm = _llm, None
+        await asyncio.to_thread(old.unload)
+        del old
+
+        _set_setup(phase="loading",
+                   detail=f"Loading {chosen['detail'] or chosen['name']}",
+                   loaded="")
+        _llm = await asyncio.to_thread(LLM, pick)
+        _llm.tools = tool_list(_feature_settings())
+        _set_setup(phase="loading", detail="Warming up — compiling GPU kernels")
+        await asyncio.to_thread(_llm.warmup)
+        _system, _system_day = _build_system(), date.today()
+        _set_setup(phase="loading", detail="Preparing the conversation…")
+        await asyncio.to_thread(_llm.prime, _system)
+
+        # Every open conversation is still pointing at the model that just left.
+        for sess in list(_sessions):
+            sess.rebind_llm(_llm)
+    except Exception as exc:
+        traceback.print_exc()
+        _set_setup(phase="failed",
+                   detail=f"Couldn't switch model: {exc}. Reopen Fennel to try "
+                          "again.")
+        return
+
+    _set_setup(phase="ready")
+    print(f"Fennel ready ({chosen['name']}).", flush=True)
+
+
 async def _prepare_models() -> None:
     """Choose, consent, download, load, warm, prime — reporting each step."""
     global _stt, _llm, _tts, _memory, _system, _system_day
@@ -353,30 +470,36 @@ async def _prepare_models() -> None:
 
     # Estimate from the last successful start; the first run has no history, so
     # it gets a rough default and then records the real number for next time.
-    eta = float(_store.setting("startup_seconds", "45") or 45)
+    # Per model: a 3B and a 14B are a minute apart, so one shared estimate was
+    # wrong for both. First run of a given model has no history and gets a
+    # rough guess scaled by its size.
+    eta_key = f"startup_seconds:{config.LLM_MODEL}"
+    eta = float(_store.setting(eta_key, "") or max(20.0, chosen["ram"] * 6))
     started = time.monotonic()
     # Weights go into unified memory one model at a time; naming each with its
     # size is more informative than a spinner, and explains where the wait goes.
+    llm_gb = chosen["bytes"] / 1e9 or 2.3
     steps = [
-        ("Qwen3-4B — the conversation", "2.3 GB"),
-        ("Kokoro — the voice", "0.6 GB"),
-        ("Whisper — speech recognition", "0.5 GB"),
-        ("bge-small — memory and recall", "0.1 GB"),
+        (f"{chosen['detail'] or chosen['name']} — the conversation", llm_gb),
+        ("Kokoro — the voice", 0.6),
+        ("Whisper — speech recognition", 0.5),
+        ("bge-small — memory and recall", 0.1),
     ]
+    total_gb = sum(g for _, g in steps)
 
     def loading(i: int) -> None:
         name, size = steps[i]
-        done = sum(float(s.split()[0]) for _, s in steps[:i])
+        done = sum(g for _, g in steps[:i])
         _set_setup(phase="loading", eta=max(1.0, eta - (time.monotonic() - started)),
-                   detail=f"Loading {name} — {size} into memory",
-                   loaded=f"{done:.1f} GB of 3.5 GB in memory")
+                   detail=f"Loading {name} — {size:.1f} GB into memory",
+                   loaded=f"{done:.1f} GB of {total_gb:.1f} GB in memory")
 
     loading(0)
     print("loading models "
           f"({config.LLM_MODEL.split('/')[-1]}, "
           f"{config.STT_MODEL.split('/')[-1]}, "
           f"{config.TTS_MODEL.split('/')[-1]}) …", flush=True)
-    _llm = await asyncio.to_thread(LLM)
+    _llm = await asyncio.to_thread(LLM, config.LLM_MODEL)
     loading(1)
     _tts = await asyncio.to_thread(KokoroTTS)
     loading(2)
@@ -388,7 +511,7 @@ async def _prepare_models() -> None:
     _memory = Memory(_store, Retriever(_store, _emb), _emb)
 
     _set_setup(phase="loading", detail="Warming up — compiling GPU kernels",
-               loaded="3.5 GB in memory",
+               loaded=f"{total_gb:.1f} GB in memory",
                eta=max(1.0, eta - (time.monotonic() - started)))
     print("warming models …", flush=True)  # move cold-start cost off turn 1
     await asyncio.to_thread(_stt.warmup)
@@ -408,11 +531,11 @@ async def _prepare_models() -> None:
     # ~15 s it takes to recompute (D-PRIMECACHE). Only the first launch after
     # the briefing changes pays the full cost.
     _set_setup(phase="loading", detail="Preparing the conversation…",
-               loaded="3.5 GB in memory",
+               loaded=f"{total_gb:.1f} GB in memory",
                eta=max(1.0, eta - (time.monotonic() - started)))
     await asyncio.to_thread(_llm.prime, _system)
 
-    _store.set_setting("startup_seconds", f"{time.monotonic() - started:.0f}")
+    _store.set_setting(eta_key, f"{time.monotonic() - started:.0f}")
     _set_setup(phase="ready")
     print("Fennel ready.", flush=True)
 
