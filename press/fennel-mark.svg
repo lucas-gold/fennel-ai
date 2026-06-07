@@ -1,0 +1,20 @@
+<svg width="120" height="120" viewBox="0 0 120 120" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Fennel logomark">
+  <g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+    <!-- bulb: squat and ribbed; a round bulb on a stem reads as a Venus symbol -->
+    <path stroke-width="6.5" d="M30 86 C30 98, 43 106, 60 106 C77 106, 90 98, 90 86 C90 74, 78 68, 60 68 C42 68, 30 74, 30 86 Z"/>
+    <!-- two heavy ribs read better at 32px than three thin ones -->
+    <g stroke-width="5.5">
+      <path d="M50 69 C46 80, 46 95, 50 105"/>
+      <path d="M70 69 C74 80, 74 95, 70 105"/>
+    </g>
+    <path stroke-width="6.5" d="M58 68 C57 60, 58 54, 61 47"/>
+    <!-- several fronds: removing them collapses the mark back into a symbol -->
+    <g stroke-width="4">
+      <path d="M61 47 C52 43, 42 43, 34 47"/>
+      <path d="M61 47 C55 37, 48 31, 39 27"/>
+      <path d="M61 47 C60 36, 62 26, 66 18"/>
+      <path d="M61 47 C68 38, 77 33, 86 31"/>
+      <path d="M61 47 C70 45, 80 47, 87 52"/>
+    </g>
+  </g>
+</svg>
