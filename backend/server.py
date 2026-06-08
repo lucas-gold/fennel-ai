@@ -14,13 +14,14 @@ import time
 import traceback
 from datetime import date
 from functools import partial
+from typing import Optional
 
 import numpy as np
 import websockets
 
 import config
 import protocol as P
-from voice import embed, setup as model_setup
+from voice import embed, setup as model_setup, sysmem
 from voice.briefing import Briefing, Retriever
 from voice.llm import LLM
 from voice.memory import Memory
@@ -30,9 +31,12 @@ from voice.stt import WhisperSTT
 from voice.tools import system_prompt, tool_list
 from voice.tts import KokoroTTS
 
-_stt: WhisperSTT
-_llm: LLM
-_tts: KokoroTTS
+# Bound to None rather than merely annotated: an annotation creates no name, so
+# the "have we loaded this already?" checks that let a cancelled load skip the
+# model-independent work raised NameError instead.
+_stt: Optional[WhisperSTT] = None
+_llm: Optional[LLM] = None
+_tts: Optional[KokoroTTS] = None
 _store: Store
 _memory: Memory
 _briefing: Briefing
@@ -111,6 +115,19 @@ _ready = asyncio.Event()
 # cheaper than discovering it. `_chosen_model` is set from the UI.
 _model_chosen = asyncio.Event()
 _chosen_model: str = ""
+# Set from the loading screen. Loading happens on worker threads that
+# cannot be interrupted mid-step, so this is checked between steps: the
+# current step finishes, then the model is unloaded and the picker returns.
+_cancel_load = asyncio.Event()
+
+
+class _Cancelled(Exception):
+    """The user pressed Cancel on the loading screen."""
+
+
+def _check_cancel() -> None:
+    if _cancel_load.is_set():
+        raise _Cancelled()
 _setup_state: dict = {"phase": "checking"}   # fields only; "type" is added on send
 
 
@@ -166,6 +183,8 @@ async def handler(ws) -> None:
                     global _chosen_model
                     _chosen_model = str(m.get("id", ""))
                     _model_chosen.set()
+                elif kind == "model_cancel":
+                    _cancel_load.set()
                 elif kind == "model_delete":
                     # Deleting is allowed while the picker is up because nothing
                     # is loaded yet; once a model is in memory it is protected.
@@ -263,6 +282,8 @@ async def handler(ws) -> None:
                     global _chosen_model
                     _chosen_model = str(msg.get("id", ""))
                     _model_chosen.set()
+                elif msg["type"] == "model_cancel":
+                    _cancel_load.set()
                 elif msg["type"] == "model_delete":
                     try:
                         model_setup.delete(str(msg.get("id", "")),
@@ -304,6 +325,7 @@ async def main() -> None:
         print(f"Fennel backend listening on ws://{config.HOST}:{config.PORT}  "
               f"(tier={config.TIER})", flush=True)
         asyncio.create_task(_watch_parent())
+        asyncio.create_task(_broadcast_memory())
         try:
             await _prepare_models()
         except Exception as exc:
@@ -316,6 +338,21 @@ async def main() -> None:
             _set_setup(phase="failed",
                        detail=f"Couldn't start the model: {exc}")
         await asyncio.Future()
+
+
+async def _broadcast_memory() -> None:
+    """Push the memory picture while anyone is watching.
+
+    Two numbers matter and neither is the process RSS: what MLX is holding
+    (which is what changes when you switch model) and how much of the machine
+    is spoken for (which is what decides whether the next one will fit).
+    """
+    while True:
+        await asyncio.sleep(2)
+        if not _clients:
+            continue
+        snap = sysmem.snapshot()
+        await _broadcast(P.encode("memory", **snap))
 
 
 async def _watch_parent() -> None:
@@ -425,20 +462,58 @@ async def _switch_model() -> None:
 
 
 async def _prepare_models() -> None:
-    """Choose, consent, download, load, warm, prime — reporting each step."""
-    global _stt, _llm, _tts, _memory, _system, _system_day
+    """Choose a model, then load everything, retrying if a load is cancelled."""
 
     # Which model, before anything else: the download list, the prime-cache key
     # and the settings panel all read config.LLM_MODEL, so it is settled first
     # and only then does anything look at the disk or the network.
-    stored = _store.setting("llm_model", "") or config.DEFAULT_MODEL
-    _set_setup(phase="choose_model", models=model_setup.catalogue(),
-               current=stored, note="")
-    await _model_chosen.wait()
-    config.LLM_MODEL = _chosen_model or stored
-    _store.set_setting("llm_model", config.LLM_MODEL)
-    chosen = config.model_info(config.LLM_MODEL)
-    print(f"[setup] model: {chosen['name']} ({config.LLM_MODEL})", flush=True)
+    #
+    # The picker is skipped when last launch's model is still on disk — it is
+    # reachable from the chat, so making everyone pass through it every time was
+    # a toll rather than a choice. Cancelling a load brings it back.
+    global _chosen_model
+    force_picker = False
+    while True:
+        stored = _store.setting("llm_model", "") or config.DEFAULT_MODEL
+        if not force_picker and model_setup.installed(stored):
+            config.LLM_MODEL = stored
+        else:
+            _model_chosen.clear()
+            _chosen_model = ""
+            _set_setup(phase="choose_model", models=model_setup.catalogue(),
+                       current=stored, note="")
+            await _model_chosen.wait()
+            config.LLM_MODEL = _chosen_model or stored
+        _store.set_setting("llm_model", config.LLM_MODEL)
+        chosen = config.model_info(config.LLM_MODEL)
+        print(f"[setup] model: {chosen['name']} ({config.LLM_MODEL})", flush=True)
+        _cancel_load.clear()
+        try:
+            await _load_everything(chosen)
+        except _Cancelled:
+            print("[setup] load cancelled; back to the picker", flush=True)
+            await _drop_llm()
+            force_picker = True
+            continue
+        break
+
+
+
+async def _drop_llm() -> None:
+    """Give back whatever a cancelled or superseded load left behind."""
+    global _llm
+    old, _llm = _llm, None
+    if old is not None:
+        await asyncio.to_thread(old.unload)
+
+
+async def _load_everything(chosen: dict) -> None:
+    """Download if needed, load every model, warm and prime.
+
+    Raises `_Cancelled` if the loading screen's Cancel is pressed; the
+    caller unloads and returns to the picker.
+    """
+    global _stt, _llm, _tts, _memory, _system, _system_day
 
     if pending := model_setup.missing():
         size = model_setup.human(model_setup.total_bytes(pending))
@@ -494,16 +569,24 @@ async def _prepare_models() -> None:
                    detail=f"Loading {name} — {size:.1f} GB into memory",
                    loaded=f"{done:.1f} GB of {total_gb:.1f} GB in memory")
 
+    _check_cancel()
     loading(0)
     print("loading models "
           f"({config.LLM_MODEL.split('/')[-1]}, "
           f"{config.STT_MODEL.split('/')[-1]}, "
           f"{config.TTS_MODEL.split('/')[-1]}) …", flush=True)
     _llm = await asyncio.to_thread(LLM, config.LLM_MODEL)
+    # Cancel cannot interrupt a load already running on a worker thread, so the
+    # step finishes and is thrown away here instead.
+    _check_cancel()
+    # Only once: these do not change with the model, and a cancelled load that
+    # returns to the picker must not pay for them twice.
     loading(1)
-    _tts = await asyncio.to_thread(KokoroTTS)
+    if _tts is None:
+        _tts = await asyncio.to_thread(KokoroTTS)
     loading(2)
-    _stt = WhisperSTT()
+    if _stt is None:
+        _stt = WhisperSTT()
     loading(3)
     # Embeddings power both news retrieval and conversational recall; loading is
     # lazy and optional, so a failure degrades to keyword search (embed.shared).
@@ -513,6 +596,7 @@ async def _prepare_models() -> None:
     _set_setup(phase="loading", detail="Warming up — compiling GPU kernels",
                loaded=f"{total_gb:.1f} GB in memory",
                eta=max(1.0, eta - (time.monotonic() - started)))
+    _check_cancel()
     print("warming models …", flush=True)  # move cold-start cost off turn 1
     await asyncio.to_thread(_stt.warmup)
     await asyncio.to_thread(_tts.warmup)

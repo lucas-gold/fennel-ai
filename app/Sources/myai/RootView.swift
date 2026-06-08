@@ -67,6 +67,12 @@ private struct FirstRunOverlay: View {
         .onAppear { breathe = true }
     }
 
+    private var memoryLine: String {
+        func gb(_ n: Int) -> String { String(format: "%.1f", Double(n) / 1_073_741_824) }
+        let model = chat.modelBytes > 0 ? "\(gb(chat.modelBytes)) GB loaded · " : ""
+        return model + "\(gb(chat.systemUsedBytes)) of \(gb(chat.systemTotalBytes)) GB used"
+    }
+
     @ViewBuilder private var content: some View {
         switch chat.setupPhase {
         case "choose_model":
@@ -98,12 +104,29 @@ private struct FirstRunOverlay: View {
                 Text(chat.setupDetail.isEmpty ? "Loading the models it runs on."
                                               : chat.setupDetail)
                     .font(.system(size: 11)).foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
                 if !chat.setupLoaded.isEmpty {
                     Text(chat.setupLoaded)
                         .font(.system(size: 10).monospacedDigit())
                         .foregroundStyle(.tertiary)
                 }
                 if chat.setupEta > 1 { Countdown(seconds: chat.setupEta) }
+
+                // Measured, not estimated. The step labels are a plan; this is
+                // what the machine is actually holding while it happens.
+                if chat.systemTotalBytes > 0 {
+                    Text(memoryLine)
+                        .font(.system(size: 10).monospacedDigit())
+                        .foregroundStyle(.tertiary)
+                        .padding(.top, 2)
+                }
+
+                Button("Cancel") { chat.cancelModelLoad() }
+                    .buttonStyle(.plain)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(Color.secondary)
+                    .padding(.top, 8)
+                    .help("Stop loading and choose a different model")
             }
 
         case "downloading":
@@ -235,16 +258,56 @@ private struct HomePanel: View {
     }
 
     private var orbSection: some View {
-        VStack(spacing: 14) {
-            VoiceOrb(state: orbState, listening: chat.listening, level: chat.level)
-                .onTapGesture { chat.toggleListening() }
-            Text(statusLine)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(.secondary)
-                .contentTransition(.opacity)
-                .animation(.easeInOut(duration: 0.2), value: statusLine)
+        VStack(spacing: 0) {
+            Spacer(minLength: 0)
+            VStack(spacing: 14) {
+                VoiceOrb(state: orbState, listening: chat.listening, level: chat.level)
+                    .onTapGesture { chat.toggleListening() }
+                Text(statusLine)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .contentTransition(.opacity)
+                    .animation(.easeInOut(duration: 0.2), value: statusLine)
+            }
+            Spacer(minLength: 0)
+            modelFooter
         }
+        .frame(maxHeight: .infinity)
         .padding(.vertical, stacked ? 16 : 28)
+    }
+
+    /// Which model is answering, and what it is costing — sat at the foot of
+    /// the orb column, out of the way of the conversation but always visible.
+    private var modelFooter: some View {
+        VStack(spacing: 5) {
+            Button { chat.reopenModelPicker() } label: {
+                HStack(spacing: 5) {
+                    Image(systemName: "arrow.triangle.2.circlepath")
+                        .font(.system(size: 9.5, weight: .semibold))
+                    Text(chat.modelName.isEmpty ? "Model" : chat.modelName)
+                        .font(.system(size: 11, weight: .medium))
+                }
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 9)
+                .padding(.vertical, 4)
+                .background(Capsule().fill(Theme.bubble))
+                .contentShape(Capsule())
+            }
+            .buttonStyle(.plain)
+            .help("Switch model")
+
+            if chat.systemTotalBytes > 0 {
+                Text(memoryLine)
+                    .font(.system(size: 9.5).monospacedDigit())
+                    .foregroundStyle(.tertiary)
+            }
+        }
+    }
+
+    private var memoryLine: String {
+        func gb(_ n: Int) -> String { String(format: "%.1f", Double(n) / 1_073_741_824) }
+        let model = chat.modelBytes > 0 ? "\(gb(chat.modelBytes)) GB model · " : ""
+        return model + "\(gb(chat.systemUsedBytes)) of \(gb(chat.systemTotalBytes)) GB used"
     }
 
     private var statusLine: String {
@@ -561,26 +624,7 @@ private struct ChatPanel: View {
             .padding(.horizontal, 18)
             .padding(.top, 12)
 
-            HStack(spacing: 12) {
-                // Which model is answering, where you can see it while typing.
-                // Clicking it reopens the picker; the running model stays in
-                // memory, so coming back to the same one costs nothing.
-                Button { chat.reopenModelPicker() } label: {
-                    HStack(spacing: 4) {
-                        Image(systemName: "arrow.triangle.2.circlepath")
-                            .font(.system(size: 9, weight: .semibold))
-                        Text(chat.modelName.isEmpty ? "Model" : chat.modelName)
-                            .font(.system(size: 10, weight: .medium))
-                    }
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 7)
-                    .padding(.vertical, 3)
-                    .background(Capsule().fill(Theme.bubble))
-                    .contentShape(Capsule())
-                }
-                .buttonStyle(.plain)
-                .help("Switch model")
-
+            HStack {
                 Toggle("Speak typed replies", isOn: $chat.speakTypedReplies)
                     .toggleStyle(.checkbox)
                     .controlSize(.small)

@@ -32,6 +32,10 @@ struct ChatSession: Identifiable, Equatable {
 /// menu rather than accumulating as tabs.
 struct SessionBar: View {
     @EnvironmentObject var chat: ChatModel
+    @State private var showHistory = false
+    /// Which row is asking "delete?". A saved conversation cannot be got back,
+    /// so it asks — a model can at least be re-downloaded and that asks too.
+    @State private var confirmingDelete: Int?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -47,39 +51,29 @@ struct SessionBar: View {
                 }
                 Spacer(minLength: 8)
 
-                Menu {
-                    if chat.sessions.isEmpty { Text("No saved chats") }
-                    ForEach(chat.sessions) { s in
-                        Button {
-                            chat.openSession(s.id)
-                        } label: {
-                            Text(s.id == chat.currentSessionID ? "\u{2713} \(s.title)" : s.title)
-                            Text(s.subtitle)
-                        }
-                    }
-                    if !chat.sessions.isEmpty {
-                        Divider()
-                        Menu("Delete") {
-                            ForEach(chat.sessions) { s in
-                                Button(s.title, role: .destructive) { chat.deleteSession(s.id) }
-                            }
-                        }
-                    }
-                } label: {
-                    Image(systemName: "clock.arrow.circlepath")
-                        .font(.system(size: 12, weight: .medium))
+                // A popover rather than a Menu: a menu is an NSMenu, and its
+                // rows cannot hold their own buttons, so opening and deleting
+                // had to be two separate lists of the same conversations.
+                IconButton(symbol: "clock.arrow.circlepath", help: "Past chats") {
+                    chat.refreshSessions()
+                    confirmingDelete = nil
+                    showHistory.toggle()
                 }
-                .menuStyle(.borderlessButton)
-                .menuIndicator(.hidden)
-                .frame(width: 22)
-                .help("Past chats")
-                .onTapGesture { chat.refreshSessions() }
+                .popover(isPresented: $showHistory, arrowEdge: .bottom) {
+                    historyList
+                }
 
                 IconButton(symbol: "square.and.pencil", help: "New chat") {
                     chat.newSession()
                 }
                 IconButton(symbol: "xmark", help: "Close this chat (kept in History)") {
                     chat.closeTab(chat.currentSessionID)
+                }
+                // Closing keeps the conversation; this is the one that does not.
+                IconButton(symbol: "trash", help: "Delete this chat for good") {
+                    chat.refreshSessions()
+                    confirmingDelete = chat.currentSessionID
+                    showHistory = true
                 }
             }
             .padding(.horizontal, 16)
@@ -89,6 +83,69 @@ struct SessionBar: View {
             Divider()
         }
         .background(.ultraThinMaterial)
+    }
+
+    private var historyList: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text("Past chats")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 12).padding(.top, 10).padding(.bottom, 6)
+            if chat.sessions.isEmpty {
+                Text("No saved chats yet.")
+                    .font(.system(size: 11)).foregroundStyle(.tertiary)
+                    .padding(.horizontal, 12).padding(.bottom, 12)
+            } else {
+                ScrollView {
+                    VStack(spacing: 2) {
+                        ForEach(chat.sessions) { s in historyRow(s) }
+                    }
+                    .padding(.horizontal, 8).padding(.bottom, 8)
+                }
+                .frame(maxHeight: 320)
+            }
+        }
+        .frame(width: 360)
+    }
+
+    private func historyRow(_ s: ChatSession) -> some View {
+        HStack(spacing: 8) {
+            VStack(alignment: .leading, spacing: 1) {
+                Text(s.title)
+                    .font(.system(size: 12, weight: s.id == chat.currentSessionID
+                                  ? .semibold : .regular))
+                    .lineLimit(1)
+                Text("\(s.subtitle) · \(s.count) messages")
+                    .font(.system(size: 10)).foregroundStyle(.tertiary)
+            }
+            Spacer(minLength: 8)
+            if confirmingDelete == s.id {
+                Button("Delete") {
+                    chat.deleteSession(s.id)
+                    confirmingDelete = nil
+                }
+                .font(.system(size: 11, weight: .semibold)).foregroundStyle(Color.red)
+                Button("Cancel") { confirmingDelete = nil }
+                    .font(.system(size: 11)).foregroundStyle(Color.secondary)
+            } else {
+                Button(s.id == chat.currentSessionID ? "Open" : "Load") {
+                    chat.openSession(s.id)
+                    showHistory = false
+                }
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(Theme.accentSolid)
+                Button { confirmingDelete = s.id } label: {
+                    Image(systemName: "trash").font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 20, height: 18)
+                        .contentShape(Rectangle())
+                }
+            }
+        }
+        .buttonStyle(.plain)
+        .padding(.horizontal, 9).padding(.vertical, 7)
+        .background(RoundedRectangle(cornerRadius: 8, style: .continuous)
+            .fill(s.id == chat.currentSessionID ? Theme.bubble : Color.clear))
     }
 
     private var tabStrip: some View {

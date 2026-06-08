@@ -38,12 +38,19 @@ final class LaunchState: ObservableObject {
         // Ready means: socket open, models loaded, AND this session's history
         // delivered. Dropping the overlay any earlier showed an empty chat that
         // filled itself in a second later, which reads as a bug.
+        // Follows the backend for the life of the app rather than latching
+        // once. The model picker can be reopened from the chat, which puts the
+        // backend back into setup — with a one-shot gate that request went
+        // through and nothing appeared, so the button looked dead.
         Task {
-            while !(chat.connected && chat.setupPhase == "ready"
-                    && chat.sessionLoaded) {
-                try? await Task.sleep(for: .milliseconds(300))
+            while true {
+                let up = chat.connected && chat.setupPhase == "ready"
+                         && chat.sessionLoaded
+                if up == starting {
+                    withAnimation(.easeOut(duration: 0.3)) { starting = !up }
+                }
+                try? await Task.sleep(for: .milliseconds(200))
             }
-            withAnimation(.easeOut(duration: 0.3)) { starting = false }
         }
         NotificationCenter.default.addObserver(
             forName: NSApplication.willTerminateNotification, object: nil, queue: .main
