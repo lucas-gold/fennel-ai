@@ -7,6 +7,9 @@ struct ChatMessage: Identifiable {
     let id = UUID()
     let role: Role
     var text: String
+    /// Position in the transcript. Messages and cards share one counter so the
+    /// two can be interleaved in the order things actually happened.
+    var seq: Int = 0
 }
 
 /// Mirrors the backend `state` control frame; also drives the voice orb.
@@ -31,7 +34,13 @@ final class ChatModel: ObservableObject {
     @Published var level: Float = 0          // 0…1 mic RMS for the orb
     @Published var connected = false         // backend reachable?
     @Published var speakTypedReplies = false // speak replies to typed messages too
-    @Published var cards: [HomeCard] = []    // home surface, raised by tool calls
+    @Published var cards: [HomeCard] = []    // tool results, placed in the transcript
+
+    /// A running timer stays pinned beside the orb rather than scrolling away
+    /// with the conversation — a countdown you cannot see is not a countdown.
+    var pinnedCards: [HomeCard] { cards.filter { $0.kind == .timer } }
+    /// Everything else belongs in the timeline, at the point it happened.
+    var inlineCards: [HomeCard] { cards.filter { $0.kind != .timer } }
     @Published var sessions: [ChatSession] = []
     @Published var currentSessionID = 0
     /// Chats showing in the tab strip. One is the norm — the strip only appears
@@ -67,6 +76,9 @@ final class ChatModel: ObservableObject {
     private let client = WebSocketClient()
     private let audio = AudioEngine()
     private var activeTurn: Int?
+    private var nextSeq = 0
+    /// Next position in the transcript, for a message or a card.
+    private func takeSeq() -> Int { nextSeq += 1; return nextSeq }
     private var sawTurnEnd = true             // false while a turn is underway
     private var awaitToken = 0                // invalidates a pending typing timer
 
@@ -111,7 +123,7 @@ final class ChatModel: ObservableObject {
         // Typing is an interruption too. Stop locally rather than waiting for
         // the backend's cancel to make the round trip.
         if state == .speaking || state == .thinking { audio.stopPlayback() }
-        messages.append(ChatMessage(role: .user, text: text))
+        messages.append(ChatMessage(role: .user, text: text, seq: takeSeq()))
         beginAwaitingReply()
         client.send(Wire.encode("user_text", ["text": text, "speak": speakTypedReplies]))
     }
@@ -135,7 +147,7 @@ final class ChatModel: ObservableObject {
             }
         case "stt":                                    // what the mic was heard to say
             if let t = msg["text"] as? String, !t.isEmpty {
-                messages.append(ChatMessage(role: .user, text: t))
+                messages.append(ChatMessage(role: .user, text: t, seq: takeSeq()))
                 beginAwaitingReply()
             }
         case "token":
@@ -183,7 +195,8 @@ final class ChatModel: ObservableObject {
             messages = rows.compactMap { row in
                 guard let text = row["text"] as? String, !text.isEmpty,
                       let role = row["role"] as? String else { return nil }
-                return ChatMessage(role: role == "user" ? .user : .assistant, text: text)
+                return ChatMessage(role: role == "user" ? .user : .assistant,
+                                   text: text, seq: takeSeq())
             }
             activeTurn = nil
             sawTurnEnd = true
@@ -302,10 +315,10 @@ final class ChatModel: ObservableObject {
         let id = msg["id"] as? String ?? UUID().uuidString
         guard let name = msg["name"] as? String,
               let args = msg["args"] as? [String: Any],
-              let card = HomeCard(id: id, name: name, args: args)
+              var card = HomeCard(id: id, name: name, args: args)
         else { return }
-
-        withAnimation(.easeOut(duration: 0.18)) { cards.insert(card, at: 0) }
+        card.seq = takeSeq()
+        withAnimation(.easeOut(duration: 0.18)) { cards.append(card) }
         if card.kind == .timer { startTimer(card) }
 
         Task {
@@ -399,7 +412,7 @@ final class ChatModel: ObservableObject {
     private func appendToken(_ chunk: String, turn: Int) {
         if activeTurn != turn || messages.last?.role != .assistant {
             activeTurn = turn
-            messages.append(ChatMessage(role: .assistant, text: chunk))
+            messages.append(ChatMessage(role: .assistant, text: chunk, seq: takeSeq()))
         } else {
             messages[messages.count - 1].text += chunk
         }

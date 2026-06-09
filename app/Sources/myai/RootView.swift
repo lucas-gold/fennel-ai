@@ -10,14 +10,30 @@ struct RootView: View {
         }
     }
 
+    /// Side by side while there's room; stacked once the window is narrow
+    /// enough that a 300pt column would squeeze the conversation.
     private var main: some View {
-        HStack(spacing: 0) {
-            HomePanel()
-                .frame(width: 320)
-                .background(.ultraThinMaterial)
-            Divider()
-            ChatPanel()
-                .frame(minWidth: 460)
+        GeometryReader { geo in
+            let wide = geo.size.width >= 760
+            Group {
+                if wide {
+                    HStack(spacing: 0) {
+                        HomePanel(stacked: false)
+                            .frame(width: 300)
+                            .background(.ultraThinMaterial)
+                        Divider()
+                        ChatPanel()
+                    }
+                } else {
+                    VStack(spacing: 0) {
+                        HomePanel(stacked: true)
+                            .background(.ultraThinMaterial)
+                        Divider()
+                        ChatPanel()
+                    }
+                }
+            }
+            .animation(.easeInOut(duration: 0.2), value: wide)
         }
         .background(Color(nsColor: .textBackgroundColor))
     }
@@ -146,14 +162,30 @@ private struct Countdown: View {
 /// The voice surface: the orb, and whatever the assistant has put on screen.
 private struct HomePanel: View {
     @EnvironmentObject var chat: ChatModel
+    var stacked = false
 
     var body: some View {
         VStack(spacing: 0) {
             header
             orbSection
-            if chat.cards.isEmpty { emptyState } else { cardList }
+            // Only live things live here now. Everything a turn *produced* sits
+            // in the transcript, at the point it happened.
+            if !chat.pinnedCards.isEmpty { pinned }
+            if !stacked { Spacer(minLength: 0) }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .frame(maxWidth: .infinity)
+    }
+
+    private var pinned: some View {
+        VStack(spacing: 8) {
+            ForEach(chat.pinnedCards) { card in
+                HomeCardView(card: card, onDismiss: {
+                    withAnimation(.easeOut(duration: 0.18)) { chat.dismiss(card) }
+                }, onUndo: { chat.undoDelete(card) })
+            }
+        }
+        .padding(.horizontal, Theme.gutter)
+        .padding(.bottom, 14)
     }
 
     private var header: some View {
@@ -190,7 +222,7 @@ private struct HomePanel: View {
                 .contentTransition(.opacity)
                 .animation(.easeInOut(duration: 0.2), value: statusLine)
         }
-        .padding(.vertical, 28)
+        .padding(.vertical, stacked ? 16 : 28)
     }
 
     private var statusLine: String {
@@ -201,36 +233,6 @@ private struct HomePanel: View {
         }
     }
 
-    private var emptyState: some View {
-        VStack(spacing: 8) {
-            Spacer()
-            Image(systemName: "sparkles")
-                .font(.system(size: 18))
-                .foregroundStyle(.tertiary)
-            Text("When Fennel does something for you — a reminder,\na timer, a lookup — the card lands here.")
-                .font(.system(size: 11))
-                .foregroundStyle(.tertiary)
-                .multilineTextAlignment(.center)
-                .lineSpacing(2)
-            Spacer()
-        }
-        .padding(.horizontal, Theme.gutter)
-    }
-
-    private var cardList: some View {
-        ScrollView {
-            LazyVStack(spacing: 8) {
-                ForEach(chat.cards) { card in
-                    HomeCardView(card: card, onDismiss: {
-                        withAnimation(.easeOut(duration: 0.18)) { chat.dismiss(card) }
-                    }, onUndo: { chat.undoDelete(card) })
-                }
-            }
-            .padding(.horizontal, Theme.gutter)
-            .padding(.bottom, 16)
-        }
-        .scrollIndicators(.never)
-    }
 }
 
 /// The orb. Three concentric layers that each read at a glance: a soft halo that
@@ -256,13 +258,19 @@ private struct VoiceOrb: View {
                 .scaleEffect(swell)
                 .animation(.easeOut(duration: 0.12), value: level)
 
-            // Slow breath, so it looks alive while idle.
-            Circle()
-                .strokeBorder(colors[0].opacity(0.22), lineWidth: 1)
-                .frame(width: 128, height: 128)
-                .scaleEffect(pulse ? 1.06 : 0.97)
-                .animation(.easeInOut(duration: 2.6).repeatForever(autoreverses: true),
-                           value: pulse)
+            // Concentric rings drifting outward. Staggered so they read as one
+            // slow pulse rather than three things moving; each fades as it goes,
+            // which is what stops it looking like a loading spinner.
+            ForEach(0..<3, id: \.self) { i in
+                let delay = Double(i) * 1.5
+                Circle()
+                    .strokeBorder(colors[0].opacity(0.26), lineWidth: 1)
+                    .frame(width: 118, height: 118)
+                    .scaleEffect(pulse ? 1.42 : 0.94)
+                    .opacity(pulse ? 0 : 0.9)
+                    .animation(.easeOut(duration: 4.5).repeatForever(autoreverses: false)
+                                .delay(delay), value: pulse)
+            }
 
             Circle()
                 .fill(LinearGradient(colors: colors,
@@ -429,8 +437,15 @@ private struct ChatPanel: View {
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 14) {
-                    if chat.messages.isEmpty { welcome }
-                    ForEach(chat.messages) { MessageRow(message: $0) }
+                    if chat.messages.isEmpty && chat.inlineCards.isEmpty { welcome }
+                    // Messages and cards share one counter, so the transcript is
+                    // simply everything that happened, in order.
+                    ForEach(entries, id: \.id) { entry in
+                        switch entry.kind {
+                        case .message(let m): MessageRow(message: m)
+                        case .card(let c):    TranscriptCard(card: c)
+                        }
+                    }
                     if chat.showTyping { TypingIndicator() }
                     Color.clear.frame(height: 1).id(bottomID)
                 }
@@ -447,6 +462,20 @@ private struct ChatPanel: View {
                 proxy.scrollTo(bottomID, anchor: .bottom)
             }
         }
+    }
+
+    /// One ordered list of everything in the conversation.
+    private struct Entry: Identifiable {
+        enum Kind { case message(ChatMessage), card(HomeCard) }
+        let id: String
+        let seq: Int
+        let kind: Kind
+    }
+
+    private var entries: [Entry] {
+        let m = chat.messages.map { Entry(id: $0.id.uuidString, seq: $0.seq, kind: .message($0)) }
+        let c = chat.inlineCards.map { Entry(id: $0.id, seq: $0.seq, kind: .card($0)) }
+        return (m + c).sorted { $0.seq < $1.seq }
     }
 
     private var welcome: some View {
@@ -511,6 +540,49 @@ private struct ChatPanel: View {
         guard !text.isEmpty else { return }
         chat.sendUserText(text)
         draft = ""
+    }
+}
+
+/// A tool result inside the conversation.
+///
+/// Searches are the exception and get a single line rather than a card: the
+/// answer is already in the reply above, so a card would repeat it. What is
+/// genuinely useful is where it came from and a way to open it.
+private struct TranscriptCard: View {
+    @EnvironmentObject var chat: ChatModel
+    let card: HomeCard
+
+    var body: some View {
+        if card.kind == .search {
+            sourceLine
+        } else {
+            HomeCardView(card: card, onDismiss: {
+                withAnimation(.easeOut(duration: 0.18)) { chat.dismiss(card) }
+            }, onUndo: { chat.undoDelete(card) })
+            .frame(maxWidth: 420, alignment: .leading)
+        }
+    }
+
+    private var sourceLine: some View {
+        HStack(spacing: 5) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 9, weight: .semibold))
+            Text(card.searchSource)
+                .font(.system(size: 11, weight: .medium))
+            if let first = card.subtitle?.split(separator: "·").last
+                .map({ $0.trimmingCharacters(in: .whitespaces) }), !first.isEmpty {
+                Text("· \(card.title)").font(.system(size: 11)).lineLimit(1)
+            }
+            if let url = card.searchLink {
+                Link(destination: url) {
+                    Image(systemName: "arrow.up.right")
+                        .font(.system(size: 9, weight: .semibold))
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .foregroundStyle(.tertiary)
+        .padding(.top, -6)
     }
 }
 
