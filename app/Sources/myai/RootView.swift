@@ -69,8 +69,9 @@ private struct FirstRunOverlay: View {
 
     private var memoryLine: String {
         func gb(_ n: Int) -> String { String(format: "%.1f", Double(n) / 1_073_741_824) }
-        let model = chat.modelBytes > 0 ? "\(gb(chat.modelBytes)) GB loaded · " : ""
-        return model + "\(gb(chat.systemUsedBytes)) of \(gb(chat.systemTotalBytes)) GB used"
+        let free = max(0, chat.systemTotalBytes - chat.systemUsedBytes)
+        let model = chat.modelBytes > 0 ? "\(gb(chat.modelBytes)) GB loaded  ·  " : ""
+        return model + "\(gb(chat.systemUsedBytes)) GB used  ·  \(gb(free)) GB free"
     }
 
     @ViewBuilder private var content: some View {
@@ -304,10 +305,13 @@ private struct HomePanel: View {
         }
     }
 
+    /// Model, then the machine. Free matters more than used when the question
+    /// is "can I switch to the 14B", so both are shown.
     private var memoryLine: String {
         func gb(_ n: Int) -> String { String(format: "%.1f", Double(n) / 1_073_741_824) }
-        let model = chat.modelBytes > 0 ? "\(gb(chat.modelBytes)) GB model · " : ""
-        return model + "\(gb(chat.systemUsedBytes)) of \(gb(chat.systemTotalBytes)) GB used"
+        let free = max(0, chat.systemTotalBytes - chat.systemUsedBytes)
+        let model = chat.modelBytes > 0 ? "\(gb(chat.modelBytes)) GB model  ·  " : ""
+        return model + "\(gb(chat.systemUsedBytes)) GB used  ·  \(gb(free)) GB free"
     }
 
     private var statusLine: String {
