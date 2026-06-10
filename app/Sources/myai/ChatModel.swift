@@ -71,6 +71,11 @@ final class ChatModel: ObservableObject {
     @Published var setupModels: [ModelOption] = []
     @Published var setupCurrent = ""      // which one is preselected
     @Published var setupNote = ""         // e.g. why a delete was refused
+    /// Which model is actually resident, as opposed to merely last chosen.
+    @Published var loadedModelID = ""
+    /// What Fennel holds besides the model — Whisper, Kokoro, the embedder and
+    /// the Python runtime.
+    @Published var overheadBytes = 0
     /// The model in use, for the chip beside the composer.
     @Published var modelName = ""
     @Published var modelID = ""
@@ -207,6 +212,10 @@ final class ChatModel: ObservableObject {
                 setupModels = rows.compactMap(ModelOption.init(json:))
             }
             setupCurrent = msg["current"] as? String ?? setupCurrent
+            loadedModelID = msg["loaded"] as? String ?? loadedModelID
+            overheadBytes = msg["overhead_bytes"] as? Int ?? overheadBytes
+            if let u = msg["system_used_bytes"] as? Int { systemUsedBytes = u }
+            if let t = msg["system_total_bytes"] as? Int { systemTotalBytes = t }
             setupNote = msg["note"] as? String ?? ""
         case "memory":
             modelBytes = msg["model_bytes"] as? Int ?? 0
@@ -279,6 +288,11 @@ final class ChatModel: ObservableObject {
 
     /// Abandon a load in progress and go back to the picker. The step already
     /// running on a worker thread has to finish first, so this is not instant.
+    /// Free the resident model without choosing another.
+    func unloadModel() {
+        client.send(Wire.encode("model_unload"))
+    }
+
     func cancelModelLoad() {
         client.send(Wire.encode("model_cancel"))
     }

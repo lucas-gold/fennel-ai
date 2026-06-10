@@ -66,6 +66,14 @@ def _rss() -> int:
         return 0
 
 
+def mlx_bytes() -> int:
+    """Everything MLX currently holds: live tensors plus its buffer pool."""
+    try:
+        return mx.get_active_memory() + mx.get_cache_memory()
+    except Exception:
+        return 0
+
+
 def snapshot(min_interval: float = 1.5) -> dict:
     """Current memory picture, cached briefly so a chatty caller cannot turn
     this into a fork bomb.

@@ -73,7 +73,7 @@ def catalogue() -> list[dict]:
     """The registry, annotated with what is on disk. Everything the startup
     picker needs, resolved here so the app holds no model knowledge of its own."""
     have = _weights_on_disk()
-    return [dict(m, installed=m["id"] in have,
+    return [dict({"hidden": False}, **m, installed=m["id"] in have,
                  on_disk=have.get(m["id"], 0)) for m in config.MODELS]
 
 
