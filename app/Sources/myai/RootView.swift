@@ -190,12 +190,16 @@ private struct HomePanel: View {
 
     private var header: some View {
         HStack(spacing: 6) {
-            FennelLogo(size: 17).foregroundStyle(Theme.accent)
-            Text("Fennel").font(Theme.title(15, .bold))
-            Circle()
-                .fill(chat.connected ? Color.green : Color.orange)
-                .frame(width: 6, height: 6)
-                .help(chat.connected ? "Connected" : "Backend not running")
+            FennelLogo(size: 15).foregroundStyle(.tertiary)
+            Text("Fennel")
+                .font(Theme.title(13, .semibold))
+                .foregroundStyle(.tertiary)
+            // Only when something is wrong. A permanent green dot is chrome
+            // reporting that nothing is happening.
+            if !chat.connected {
+                Circle().fill(Color.orange).frame(width: 6, height: 6)
+                    .help("Backend not running")
+            }
             Spacer()
             SettingsMenu()
         }
@@ -252,9 +256,9 @@ private struct VoiceOrb: View {
         ZStack {
             // Halo — tracks the voice, so you can see it hearing you.
             Circle()
-                .fill(RadialGradient(colors: [colors[0].opacity(0.34), .clear],
-                                     center: .center, startRadius: 8, endRadius: 88))
-                .frame(width: 176, height: 176)
+                .fill(RadialGradient(colors: [colors[0].opacity(0.30), .clear],
+                                     center: .center, startRadius: 10, endRadius: 95))
+                .frame(width: 190, height: 190)
                 .scaleEffect(swell)
                 .animation(.easeOut(duration: 0.12), value: level)
 
@@ -265,30 +269,33 @@ private struct VoiceOrb: View {
                 let delay = Double(i) * 1.5
                 Circle()
                     .strokeBorder(colors[0].opacity(0.26), lineWidth: 1)
-                    .frame(width: 118, height: 118)
+                    .frame(width: 132, height: 132)
                     .scaleEffect(pulse ? 1.42 : 0.94)
                     .opacity(pulse ? 0 : 0.9)
                     .animation(.easeOut(duration: 4.5).repeatForever(autoreverses: false)
                                 .delay(delay), value: pulse)
             }
 
+            // No rim and no symbol inside. A hard white edge made it read as a
+            // button, and the mic glyph put a piece of UI at the centre of the
+            // one thing that should just look like presence. State is carried by
+            // colour and motion; the word underneath says the rest.
             Circle()
                 .fill(LinearGradient(colors: colors,
                                      startPoint: .topLeading, endPoint: .bottomTrailing))
-                .frame(width: 92, height: 92)
-                .shadow(color: colors[0].opacity(0.34), radius: 18, y: 6)
-                .overlay(
-                    Circle().strokeBorder(.white.opacity(0.20), lineWidth: 1))
-                .scaleEffect(1 + CGFloat(min(level, 1)) * 0.05)
+                .frame(width: 104, height: 104)
+                .shadow(color: colors[0].opacity(0.45), radius: 34, y: 0)
+                .scaleEffect(1 + CGFloat(min(level, 1)) * 0.06)
                 .animation(.easeOut(duration: 0.12), value: level)
-
-            Image(systemName: listening ? "waveform" : "mic.slash.fill")
-                .font(.system(size: 24, weight: .medium))
-                .foregroundStyle(.white)
-                .shadow(radius: 2)
-                .contentTransition(.symbolEffect(.replace))
+                .overlay {
+                    // Muted reads as absence, not as a symbol: the orb simply
+                    // dims when the mic is shut.
+                    if !listening && state == .idle {
+                        Circle().fill(.black.opacity(0.34)).frame(width: 104, height: 104)
+                    }
+                }
         }
-        .frame(width: 176, height: 176)
+        .frame(width: 190, height: 190)
         .contentShape(Circle())
         .animation(.easeInOut(duration: 0.35), value: state)
         .onAppear { pulse = true }
@@ -436,7 +443,7 @@ private struct ChatPanel: View {
     private var transcript: some View {
         ScrollViewReader { proxy in
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 14) {
+                LazyVStack(alignment: .leading, spacing: 20) {
                     if chat.messages.isEmpty && chat.inlineCards.isEmpty { welcome }
                     // Messages and cards share one counter, so the transcript is
                     // simply everything that happened, in order.
@@ -449,8 +456,8 @@ private struct ChatPanel: View {
                     if chat.showTyping { TypingIndicator() }
                     Color.clear.frame(height: 1).id(bottomID)
                 }
-                .padding(.horizontal, 22)
-                .padding(.vertical, 18)
+                .padding(.horizontal, 28)
+                .padding(.vertical, 26)
             }
             .scrollIndicators(.never)
             .onChange(of: chat.messages.count) { _, _ in
@@ -611,22 +618,22 @@ private struct MessageRow: View {
 
     var body: some View {
         HStack {
-            if message.role == .user { Spacer(minLength: 60) }
+            if message.role == .user { Spacer(minLength: 70) }
             Text(rendered)
-                .font(.system(size: 13))
-                .lineSpacing(2.5)
+                .font(.system(size: 15))
+                .lineSpacing(4)
                 .textSelection(.enabled)
-                .padding(.horizontal, message.role == .user ? 13 : 0)
-                .padding(.vertical, message.role == .user ? 9 : 0)
+                .padding(.horizontal, 18)
+                .padding(.vertical, 13)
                 .background {
-                    if message.role == .user {
-                        RoundedRectangle(cornerRadius: 16, style: .continuous)
-                            .fill(Theme.accent)
-                    }
+                    RoundedRectangle(cornerRadius: 20, style: .continuous)
+                        .fill(message.role == .user
+                              ? AnyShapeStyle(Theme.accent)
+                              : AnyShapeStyle(Theme.bubble))
                 }
                 .foregroundStyle(message.role == .user ? AnyShapeStyle(.white)
                                                        : AnyShapeStyle(.primary))
-            if message.role == .assistant { Spacer(minLength: 60) }
+            if message.role == .assistant { Spacer(minLength: 70) }
         }
         .transition(.opacity.combined(with: .move(edge: .bottom)))
     }

@@ -9,8 +9,13 @@ import SwiftUI
 /// glance and never compete with the conversation.
 enum Theme {
     static let radius: CGFloat = 14
-    static let cardRadius: CGFloat = 12
+    static let cardRadius: CGFloat = 18
     static let gutter: CGFloat = 20
+    /// The one surface everything that isn't the user speaks from: assistant
+    /// replies and tool cards share it, so a card reads as part of the
+    /// conversation rather than a widget dropped into it.
+    static let bubble = Color.white.opacity(0.055)
+    static let bubbleRadius: CGFloat = 18
 
     /// The single accent gradient. Reserved for the orb and the user's bubbles;
     /// everything else stays neutral so these read as "you" and "it".
@@ -42,21 +47,14 @@ enum Theme {
 
 /// A surface that reads as a raised panel without a hard border.
 struct CardSurface: ViewModifier {
-    var tint: Color = .clear
+    var tint: Color = .clear          // kept for the icon; the surface is neutral
     var radius: CGFloat = Theme.cardRadius
 
     func body(content: Content) -> some View {
         content
             .background(
                 RoundedRectangle(cornerRadius: radius, style: .continuous)
-                    .fill(.background.secondary)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: radius, style: .continuous)
-                            .fill(tint.opacity(0.07)))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: radius, style: .continuous)
-                    .strokeBorder(Color.primary.opacity(0.07), lineWidth: 1))
+                    .fill(Theme.bubble))
             .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
     }
 }
