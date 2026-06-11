@@ -61,9 +61,8 @@ struct ModelPicker: View {
 
             confirmBar
 
-            Text(hiddenCount > 0
-                 ? "Downloaded models live in ~/.cache/huggingface. \(hiddenCount) model\(hiddenCount == 1 ? " is" : "s are") hidden — ⌥-click the title to show."
-                 : "Downloaded models live in ~/.cache/huggingface and can be removed here at any time.")
+            // No hint that anything is hidden — that is the point of hiding it.
+            Text("Downloaded models live in ~/.cache/huggingface and can be removed here at any time.")
                 .font(.system(size: 10)).foregroundStyle(.tertiary)
                 .multilineTextAlignment(.center)
         }
@@ -87,10 +86,6 @@ struct ModelPicker: View {
         let free = max(0, chat.systemTotalBytes - chat.systemUsedBytes)
         return "Total RAM: \(ModelOption.gb(chat.systemTotalBytes))    "
              + "Available RAM: \(ModelOption.gb(free))"
-    }
-
-    private var hiddenCount: Int {
-        chat.setupModels.count - visibleModels.count
     }
 
     private func row(_ m: ModelOption) -> some View {
@@ -198,7 +193,9 @@ struct ModelPicker: View {
         HStack(spacing: 10) {
             Label(disk, systemImage: m.installed ? "internaldrive" : "arrow.down.circle")
                 .foregroundStyle(m.installed ? Color.green : Color.secondary)
-            Label(String(format: "~%.1f GB in memory", m.ram), systemImage: "memorychip")
+            // The download size is also what the weights occupy once mapped.
+            // What Fennel costs besides the model is in the header, once.
+            Label("~\(ModelOption.gb(m.bytes)) in memory", systemImage: "memorychip")
                 .foregroundStyle(Color.secondary)
             // Stated plainly rather than hidden: on a model whose template
             // ignores `tools=`, reminders, timers, the agenda and web search

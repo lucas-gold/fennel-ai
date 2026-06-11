@@ -82,6 +82,9 @@ final class ChatModel: ObservableObject {
     /// Live memory, pushed by the backend every couple of seconds. `modelBytes`
     /// is what MLX actually holds — RSS understates it, because weights are
     /// mapped and only count once touched.
+    /// The language model's own share of MLX, not all of MLX. The two are far
+    /// apart: Kokoro, Whisper and the embedder live there too, as does MLX's
+    /// reusable buffer pool.
     @Published var modelBytes = 0
     @Published var systemUsedBytes = 0
     @Published var systemTotalBytes = 0
@@ -214,11 +217,13 @@ final class ChatModel: ObservableObject {
             setupCurrent = msg["current"] as? String ?? setupCurrent
             loadedModelID = msg["loaded"] as? String ?? loadedModelID
             overheadBytes = msg["overhead_bytes"] as? Int ?? overheadBytes
+            if let l = msg["llm_bytes"] as? Int { modelBytes = l }
             if let u = msg["system_used_bytes"] as? Int { systemUsedBytes = u }
             if let t = msg["system_total_bytes"] as? Int { systemTotalBytes = t }
             setupNote = msg["note"] as? String ?? ""
         case "memory":
-            modelBytes = msg["model_bytes"] as? Int ?? 0
+            modelBytes = msg["llm_bytes"] as? Int ?? modelBytes
+            overheadBytes = msg["overhead_bytes"] as? Int ?? overheadBytes
             systemUsedBytes = msg["system_used_bytes"] as? Int ?? 0
             systemTotalBytes = msg["system_total_bytes"] as? Int ?? 0
         case "settings":

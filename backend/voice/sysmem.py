@@ -66,8 +66,21 @@ def _rss() -> int:
         return 0
 
 
+def mlx_active() -> int:
+    """Live MLX tensors — the weights and caches actually in use.
+
+    Deliberately excludes MLX's reusable buffer pool: that is scratch space it
+    hands back on demand, so counting it makes a model look bigger than it is
+    and makes "available RAM" look worse than it is.
+    """
+    try:
+        return mx.get_active_memory()
+    except Exception:
+        return 0
+
+
 def mlx_bytes() -> int:
-    """Everything MLX currently holds: live tensors plus its buffer pool."""
+    """Everything MLX holds, pool included."""
     try:
         return mx.get_active_memory() + mx.get_cache_memory()
     except Exception:
@@ -92,8 +105,8 @@ def snapshot(min_interval: float = 1.5) -> dict:
     except Exception:
         active = cache = 0
     snap = {
-        "model_bytes": active + cache,
-        "model_active_bytes": active,
+        "mlx_bytes": active + cache,
+        "mlx_active_bytes": active,
         "process_bytes": _rss(),
         "system_used_bytes": used,
         "system_total_bytes": total,

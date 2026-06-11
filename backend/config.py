@@ -45,9 +45,11 @@ MAX_TOKENS = 1024 if TIER == "large" else 512
 # all thirteen tools without an error, so it is measured rather than assumed
 # (see scripts/vet-models.py) and shown as a warning on the picker.
 #
-# `bytes` is the download, measured from the repo tree. `ram` is roughly what
-# the process holds with it loaded: weights plus ~1.2 GB for Whisper, Kokoro and
-# the embedder, plus the app.
+# `bytes` is the download, measured from the repo tree, and also a fair estimate
+# of what the weights occupy once loaded — a 4-bit safetensors file is mapped
+# largely as-is. What Fennel costs *besides* the model is measured at runtime and
+# stated once in the picker's header, rather than added into every row, which
+# counted it seven times over.
 # `hidden` keeps a model off the picker until it is asked for (Option-click the
 # heading). Nothing secret — it is on the wire like any other row — just not the
 # first thing a visitor sees.
@@ -56,37 +58,37 @@ MODELS: list[dict] = [
      "name": "Light", "detail": "Llama 3.2 · 3B",
      "focus": "The quickest to answer, and the smallest. Best on 16 GB, or "
               "when you want replies to feel instant more than thorough.",
-     "bytes": 1_820_000_000, "ram": 3.1, "tools": True},
+     "bytes": 1_820_000_000, "tools": True},
     {"id": "mlx-community/Qwen3-4B-Instruct-2507-4bit",
      "name": "Everyday", "detail": "Qwen3 · 4B",
      "focus": "The default, and the one the persona and tools were tuned "
               "against. A good balance of speed and sense.",
-     "bytes": 2_280_000_000, "ram": 3.5, "tools": True},
+     "bytes": 2_280_000_000, "tools": True},
     {"id": "mlx-community/Qwen2.5-Coder-7B-Instruct-4bit",
      "name": "Code", "detail": "Qwen2.5 Coder · 7B",
      "focus": "Trained on code. Choose it for programming questions, shell "
               "commands and config files; it is plainer company than the rest.",
-     "bytes": 4_300_000_000, "ram": 5.6, "tools": True},
+     "bytes": 4_300_000_000, "tools": True},
     {"id": "mlx-community/Qwen3-8B-4bit",
      "name": "Balanced", "detail": "Qwen3 · 8B",
      "focus": "Noticeably better at reasoning and long questions than "
               "Everyday, and noticeably slower. Comfortable on 24 GB.",
-     "bytes": 4_620_000_000, "ram": 5.9, "tools": True},
+     "bytes": 4_620_000_000, "tools": True},
     {"id": "ailexleon/Rocinante-X-12B-v1-mlx-4Bit",
      "name": "Creative", "detail": "Rocinante X · 12B",
      "focus": "Tuned for prose and character writing, and far less likely to "
               "refuse. Warmer and looser; not the one for facts.",
-     "bytes": 6_910_000_000, "ram": 8.2, "tools": True},
+     "bytes": 6_910_000_000, "tools": True},
     {"id": "mlx-community/Hermes-4-14B-4bit",
      "name": "Agent", "detail": "Hermes 4 · 14B",
      "focus": "Built around tool use — the steadiest at reminders, calendar "
               "and search, and the best at multi-step requests. The largest "
               "here: fine on 24 GB, tight on 16 GB.",
-     "bytes": 8_320_000_000, "ram": 9.6, "tools": True},
+     "bytes": 8_320_000_000, "tools": True},
     {"id": "alexgusevski/Impish_Nemo_12B-mlx-4Bit",
      "name": "Unfiltered", "detail": "Impish Nemo · 12B",
      "focus": "The least restrained of the set, for fiction and roleplay.",
-     "bytes": 6_910_000_000, "ram": 8.2, "tools": False, "hidden": True},
+     "bytes": 6_910_000_000, "tools": False, "hidden": True},
 ]
 
 DEFAULT_MODEL = "mlx-community/Qwen3-4B-Instruct-2507-4bit"
@@ -104,7 +106,7 @@ def model_info(repo: str) -> dict:
         if m["id"] == repo:
             return m
     return {"id": repo, "name": repo.split("/")[-1], "detail": "",
-            "focus": "Set by hand in config.py.", "bytes": 0, "ram": 0.0,
+            "focus": "Set by hand in config.py.", "bytes": 0,
             "tools": True, "hidden": False}
 
 
