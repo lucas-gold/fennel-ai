@@ -37,10 +37,6 @@ struct ModelPicker: View {
                 Text(ramLine)
                     .font(.system(size: 11.5).monospacedDigit())
                     .foregroundStyle(.secondary)
-                if chat.overheadBytes > 0 {
-                    Text("Fennel uses \(ModelOption.gb(chat.overheadBytes)) of RAM in addition to the model")
-                        .font(.system(size: 10.5)).foregroundStyle(.tertiary)
-                }
             }
 
             if !chat.setupNote.isEmpty {
@@ -193,9 +189,11 @@ struct ModelPicker: View {
         HStack(spacing: 10) {
             Label(disk, systemImage: m.installed ? "internaldrive" : "arrow.down.circle")
                 .foregroundStyle(m.installed ? Color.green : Color.secondary)
-            // The download size is also what the weights occupy once mapped.
-            // What Fennel costs besides the model is in the header, once.
-            Label("~\(ModelOption.gb(m.bytes)) in memory", systemImage: "memorychip")
+            // Everything, not just the weights: the number people want is
+            // "what will Fennel be holding if I pick this", and splitting the
+            // model from its fixed companions only made that a sum to do.
+            Label("~\(ModelOption.gb(m.bytes + chat.overheadBytes)) in memory",
+                  systemImage: "memorychip")
                 .foregroundStyle(Color.secondary)
             // Stated plainly rather than hidden: on a model whose template
             // ignores `tools=`, reminders, timers, the agenda and web search
