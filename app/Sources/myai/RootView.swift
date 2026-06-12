@@ -368,6 +368,13 @@ private struct SettingsMenu: View {
 
                 Divider()
 
+                toggleRow("Echo cancellation", isOn: Binding(
+                    get: { chat.echoCancellation },
+                    set: { chat.setEchoCancellation($0) }),
+                    note: "Stops Fennel hearing itself through your speakers, but macOS quietens your other audio while the mic is open — there is no way to have one without the other. Off by default; Fennel still filters its own voice in software.")
+
+                Divider()
+
                 toggleRow("Look things up", isOn: Binding(
                     get: { chat.lookups },
                     set: { chat.lookups = $0; chat.saveSettings() }),
@@ -443,7 +450,7 @@ private struct ChatPanel: View {
     private var transcript: some View {
         ScrollViewReader { proxy in
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 20) {
+                LazyVStack(alignment: .leading, spacing: 16) {
                     if chat.messages.isEmpty && chat.inlineCards.isEmpty { welcome }
                     // Messages and cards share one counter, so the transcript is
                     // simply everything that happened, in order.
@@ -456,8 +463,8 @@ private struct ChatPanel: View {
                     if chat.showTyping { TypingIndicator() }
                     Color.clear.frame(height: 1).id(bottomID)
                 }
-                .padding(.horizontal, 28)
-                .padding(.vertical, 26)
+                .padding(.horizontal, 24)
+                .padding(.vertical, 22)
             }
             .scrollIndicators(.never)
             .onChange(of: chat.messages.count) { _, _ in
@@ -620,11 +627,11 @@ private struct MessageRow: View {
         HStack {
             if message.role == .user { Spacer(minLength: 70) }
             Text(rendered)
-                .font(.system(size: 15))
-                .lineSpacing(4)
+                .font(.system(size: 13.5))
+                .lineSpacing(3)
                 .textSelection(.enabled)
-                .padding(.horizontal, 18)
-                .padding(.vertical, 13)
+                .padding(.horizontal, 15)
+                .padding(.vertical, 11)
                 .background {
                     RoundedRectangle(cornerRadius: 20, style: .continuous)
                         .fill(message.role == .user

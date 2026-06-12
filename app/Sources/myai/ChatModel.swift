@@ -72,6 +72,9 @@ final class ChatModel: ObservableObject {
     /// Shown as a three-dot bubble, but only once a reply is genuinely slow —
     /// flashing it on every fast turn is worse than not having it.
     @Published var showTyping = false
+    /// Hardware echo cancellation. Costs a little of your other audio's volume
+    /// while the mic is open, which is why it is a choice rather than a given.
+    @Published var echoCancellation = UserDefaults.standard.bool(forKey: "echoCancellation")
 
     private let client = WebSocketClient()
     private let audio = AudioEngine()
@@ -110,8 +113,17 @@ final class ChatModel: ObservableObject {
             Task { @MainActor in self?.connected = up }
         }
         webKey = Keychain.get("ollama_api_key")
+        audio.echoCancellation = echoCancellation
         audio.prepare()
         client.connect()
+    }
+
+    func setEchoCancellation(_ on: Bool) {
+        echoCancellation = on
+        UserDefaults.standard.set(on, forKey: "echoCancellation")
+        audio.echoCancellation = on
+        // Takes effect on the next listen: the engine is rebuilt each time the
+        // mic opens, and switching mid-capture would drop the current utterance.
     }
 
     func toggleListening() {
