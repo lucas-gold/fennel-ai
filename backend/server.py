@@ -373,8 +373,13 @@ async def _broadcast_memory() -> None:
         await asyncio.sleep(2)
         if not _clients:
             continue
+        # Fall back the same way the picker does: during a load the real
+        # figure has not been taken yet, and reporting zero made the loading
+        # screen quote the model alone while the chat quoted everything.
         snap = dict(sysmem.snapshot(), llm_bytes=_llm_bytes,
-                    overhead_bytes=_overhead_bytes)
+                    overhead_bytes=(_overhead_bytes
+                                    or int(_store.setting("overhead_bytes", "0") or 0)
+                                    or config.OVERHEAD_ESTIMATE_BYTES))
         await _broadcast(P.encode("memory", **snap))
 
 

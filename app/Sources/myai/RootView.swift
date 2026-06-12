@@ -70,7 +70,7 @@ private struct FirstRunOverlay: View {
     private var memoryLine: String {
         func gb(_ n: Int) -> String { String(format: "%.1f", Double(n) / 1_073_741_824) }
         let free = max(0, chat.systemTotalBytes - chat.systemUsedBytes)
-        let fennel = chat.modelBytes + chat.overheadBytes
+        let fennel = chat.modelBytes + chat.overheadBytes + chat.appBytes
         let mine = fennel > 0 ? "Fennel \(gb(fennel)) GB  ·  " : ""
         return mine + "\(gb(chat.systemUsedBytes)) GB used  ·  \(gb(free)) GB free"
     }
@@ -306,7 +306,7 @@ private struct HomePanel: View {
     private var memoryLine: String {
         func gb(_ n: Int) -> String { String(format: "%.1f", Double(n) / 1_073_741_824) }
         let free = max(0, chat.systemTotalBytes - chat.systemUsedBytes)
-        let fennel = chat.modelBytes + chat.overheadBytes
+        let fennel = chat.modelBytes + chat.overheadBytes + chat.appBytes
         let mine = fennel > 0 ? "Fennel \(gb(fennel)) GB  ·  " : ""
         return mine + "\(gb(chat.systemUsedBytes)) GB used  ·  \(gb(free)) GB free"
     }

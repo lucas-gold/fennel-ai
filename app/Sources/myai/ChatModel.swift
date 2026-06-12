@@ -76,6 +76,9 @@ final class ChatModel: ObservableObject {
     /// What Fennel holds besides the model — Whisper, Kokoro, the embedder and
     /// the Python runtime.
     @Published var overheadBytes = 0
+    /// The SwiftUI app's own resident size. A separate process from the
+    /// backend, so it has to be added in rather than assumed included.
+    @Published var appBytes = 0
     /// The model in use, for the chip beside the composer.
     @Published var modelName = ""
     @Published var modelID = ""
@@ -226,6 +229,7 @@ final class ChatModel: ObservableObject {
             overheadBytes = msg["overhead_bytes"] as? Int ?? overheadBytes
             systemUsedBytes = msg["system_used_bytes"] as? Int ?? 0
             systemTotalBytes = msg["system_total_bytes"] as? Int ?? 0
+            appBytes = msg["app_bytes"] as? Int ?? appBytes
         case "settings":
             dailyUpdates = msg["daily_updates"] as? Bool ?? false
             location = msg["location"] as? String ?? ""

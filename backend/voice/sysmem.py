@@ -55,6 +55,25 @@ def _system_used() -> tuple[int, int]:
     return used_pages * page, total
 
 
+def _rss_of(pid: int) -> int:
+    try:
+        out = subprocess.check_output(
+            ["ps", "-o", "rss=", "-p", str(pid)], text=True).strip()
+        return int(out) * 1024
+    except Exception:
+        return 0
+
+
+def _app_rss() -> int:
+    """The SwiftUI app, which is a separate process from this one.
+
+    Its pid arrives as FENNEL_PARENT_PID (the same handle the watchdog uses).
+    Run from a terminal there is no app, and this is simply zero.
+    """
+    parent = os.environ.get("FENNEL_PARENT_PID", "")
+    return _rss_of(int(parent)) if parent.isdigit() else 0
+
+
 def _rss() -> int:
     """This process's resident size. One fork per sample, so it is rate limited
     by the caller rather than polled tightly."""
@@ -108,6 +127,7 @@ def snapshot(min_interval: float = 1.5) -> dict:
         "mlx_bytes": active + cache,
         "mlx_active_bytes": active,
         "process_bytes": _rss(),
+        "app_bytes": _app_rss(),
         "system_used_bytes": used,
         "system_total_bytes": total,
     }
