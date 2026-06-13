@@ -11,6 +11,7 @@ import asyncio
 import contextlib
 import os
 import time
+import traceback
 from datetime import date
 from functools import partial
 
@@ -245,7 +246,17 @@ async def main() -> None:
         print(f"Fennel backend listening on ws://{config.HOST}:{config.PORT}  "
               f"(tier={config.TIER})", flush=True)
         asyncio.create_task(_watch_parent())
-        await _prepare_models()
+        try:
+            await _prepare_models()
+        except Exception as exc:
+            # Keep serving. Startup failures used to propagate out of
+            # asyncio.run and kill the process, and a dead backend is
+            # indistinguishable from a slow one: the window sat on "Any moment
+            # now…" forever. Staying up long enough to say what broke is the
+            # whole difference between a bug report and a mystery.
+            traceback.print_exc()
+            _set_setup(phase="failed",
+                       detail=f"Couldn't start the model: {exc}")
         await asyncio.Future()
 
 

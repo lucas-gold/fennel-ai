@@ -13,6 +13,7 @@ import glob
 import hashlib
 import os
 import threading
+from concurrent.futures import ThreadPoolExecutor
 from typing import AsyncIterator, Iterator, Optional
 
 import mlx.core as mx
@@ -38,17 +39,29 @@ def _common_prefix(a: list[int], b: list[int]) -> int:
 
 class LLM:
     def __init__(self, model_id: str = config.LLM_MODEL) -> None:
-        # Bound MLX's buffer cache before anything allocates.
-        #
-        # MLX keeps freed GPU buffers around to avoid re-allocating, and by
-        # default that pool grows without limit: measured 3.96 GB of cache
-        # against 2.91 GB of live weights while priming — ~6.9 GB from MLX alone
-        # on a 16 GB machine, which is how a 3.5 GB app ends up swapping. The
-        # cache only ever saves an allocation, so capping it costs a little
-        # speed and buys back gigabytes.
-        mx.set_cache_limit(config.MLX_CACHE_LIMIT_BYTES)
-        self.model, self.tokenizer = load(model_id)
-        self._cache = make_prompt_cache(self.model)
+        # The one thread MLX is allowed to see. mlx-lm generates inside a
+        # module-level `generation_stream`, and MLX registers streams per
+        # thread: arrays produced on one thread cannot be evaluated on another
+        # ("There is no Stream(gpu, 1) in current thread"). Every entry point
+        # here arrives on `asyncio.to_thread`, which hands out a different pool
+        # thread each time — so the lock below was never enough on its own. It
+        # serialised access without pinning identity. Weights included: the
+        # model is loaded here too, so nothing MLX owns is born off-thread.
+        self._exec = ThreadPoolExecutor(max_workers=1, thread_name_prefix="mlx")
+        self._mlx_thread = self._exec.submit(threading.current_thread).result()
+
+        def _load() -> tuple:
+            # Bound MLX's buffer cache before anything allocates — or don't,
+            # if the config says so. MLX's default is unbounded; the cap is
+            # there for machines where the pool competing with the weights
+            # means swapping (see config.MLX_CACHE_LIMIT_BYTES).
+            if config.MLX_CACHE_LIMIT_BYTES is not None:
+                mx.set_cache_limit(config.MLX_CACHE_LIMIT_BYTES)
+            return load(model_id)
+
+        self.model, self.tokenizer = self._exec.submit(_load).result()
+        self._ensure_turn_end_stops()
+        self._cache = self._exec.submit(make_prompt_cache, self.model).result()
         self._cached_ids: list[int] = []
         self._prime_len = 0
         self._prime_key = ""
@@ -60,7 +73,44 @@ class LLM:
         # summarising, re-priming when the daily briefing lands). Running two of
         # those at once crashes MLX natively — no Python traceback, the process
         # just dies — so every entry point that touches the model takes this.
+        # Still needed beside the single thread above: it guards the KV cache
+        # against a caller queueing work from two places at once.
         self._lock = threading.RLock()
+
+    def _ensure_turn_end_stops(self) -> None:
+        """Guarantee the token the chat template ends a turn with actually ends
+        generation.
+
+        mlx-lm takes its stop ids from config.json / generation_config.json, and
+        those files do not always agree with the template beside them. This
+        model's configs name <|endoftext|> while every rendered turn closes with
+        <|im_end|>, so nothing ever matched: generation ran to max_tokens and
+        the model sailed straight past its own reply into writing both halves of
+        an invented conversation, thinking blocks and all.
+
+        Adding the tokenizer's own declared eos_token costs nothing when the two
+        already agree — Qwen3-4B lists both tokens and is unaffected.
+        """
+        declared = getattr(self.tokenizer, "eos_token", None)
+        if not declared:
+            return
+        try:
+            token_id = self.tokenizer.convert_tokens_to_ids(declared)
+            if token_id is None or token_id in self.tokenizer.eos_token_ids:
+                return
+            self.tokenizer.add_eos_token(declared)
+        except Exception as exc:
+            print(f"[llm] couldn't register {declared!r} as a stop token: {exc}",
+                  flush=True)
+            return
+        print(f"[llm] added {declared!r} ({token_id}) to the stop tokens — the "
+              "model config omitted it", flush=True)
+
+    def _on_mlx(self, fn, *args, **kwargs):
+        """Run `fn` on the one thread MLX is allowed to see, and wait for it."""
+        if threading.current_thread() is self._mlx_thread:
+            return fn(*args, **kwargs)
+        return self._exec.submit(fn, *args, **kwargs).result()
 
     def reset(self) -> None:
         """New conversation: drop everything the conversation added, but keep
@@ -84,6 +134,34 @@ class LLM:
             f"{config.LLM_MODEL}|{token_count}|{self._prime_key}".encode()).hexdigest()[:16]
         return os.path.join(APP_DIR, "primecache", f"{key}.safetensors")
 
+    def _stable_prefix_len(self, system: str, probe: list[int]) -> int:
+        """How many leading tokens of a real prompt the user cannot influence.
+
+        Rendering the system message on its own is the direct way to ask, and
+        it is what Qwen3-4B's template allows. Not every template does: Qwen3.5
+        scans the message list for a user turn and raises "No user query found
+        in messages" on a system-only render, which took the whole backend down
+        during priming.
+
+        So ask a second way when the first is refused — render the same system
+        block against two different user messages and find where they diverge.
+        That point is the end of everything the user did not contribute, which
+        is exactly the span worth pinning, and it assumes nothing about the
+        template beyond its working at all. The result is a true prefix of a
+        real prompt either way, so a wrong guess costs reuse, never correctness.
+        """
+        try:
+            sys_only = list(self.tokenizer.apply_chat_template(
+                [{"role": "system", "content": system}],
+                add_generation_prompt=False, tokenize=True, tools=self.tools))
+            return _common_prefix(sys_only, probe)
+        except Exception as exc:
+            print(f"[llm] system-only render refused ({exc}); measuring the "
+                  "stable prefix by divergence instead", flush=True)
+            other = self._prompt_ids([{"role": "system", "content": system},
+                                      {"role": "user", "content": "zzz"}])
+            return _common_prefix(probe, other)
+
     def prime(self, system: str) -> None:
         """Prefill the stable prefix — persona, tool schemas, day table — once at
         startup and pin it under every later `reset`.
@@ -92,6 +170,8 @@ class LLM:
         this machine prefills at only ~200 tok/s: without priming, the first
         turn of every session pays ~4.7 s before the model says anything.
         """
+        if threading.current_thread() is not self._mlx_thread:
+            return self._on_mlx(self.prime, system)
         with self._lock:
             self._prime_len = 0
             self.reset()
@@ -99,10 +179,7 @@ class LLM:
         # cached tokens are a true prefix and `_common_prefix` reuses all of it.
         probe = self._prompt_ids([{"role": "system", "content": system},
                                   {"role": "user", "content": "hi"}])
-        sys_only = list(self.tokenizer.apply_chat_template(
-            [{"role": "system", "content": system}],
-            add_generation_prompt=False, tokenize=True, tools=self.tools))
-        n = _common_prefix(sys_only, probe)
+        n = self._stable_prefix_len(system, probe)
 
         self._prime_key = system
         path = self._prime_cache_path(n)
@@ -169,6 +246,8 @@ class LLM:
         `self._cache`: sharing it would evict the live conversation's prefix and
         make the user's next turn pay a full re-prefill.
         """
+        if threading.current_thread() is not self._mlx_thread:
+            return self._on_mlx(self.complete, messages, max_tokens)
         prompt = self._prompt_ids(messages)
         out: list[str] = []
         with self._lock:
@@ -182,6 +261,8 @@ class LLM:
 
     def warmup(self) -> None:
         """Compile Metal kernels with a throwaway generation so turn 1 is fast."""
+        if threading.current_thread() is not self._mlx_thread:
+            return self._on_mlx(self.warmup)
         for _ in self.stream_reply([{"role": "user", "content": "Hi"}]):
             pass
         self.reset()
@@ -193,7 +274,8 @@ class LLM:
         return list(
             self.tokenizer.apply_chat_template(
                 messages, add_generation_prompt=generation, tokenize=True,
-                tools=self.tools
+                tools=self.tools,
+                enable_thinking=False
             )
         )
 
@@ -208,6 +290,8 @@ class LLM:
         No generation prompt: the next real turn appends a user message first,
         so the assistant header would not be a prefix of it.
         """
+        if threading.current_thread() is not self._mlx_thread:
+            return self._on_mlx(self.warm, messages)
         ids = self._prompt_ids(messages, generation=False)
         with self._lock:
             common = _common_prefix(ids, self._cached_ids)
@@ -300,7 +384,7 @@ class LLM:
                 gen.close()  # -> stream_reply.finally on interruption
                 loop.call_soon_threadsafe(queue.put_nowait, None)
 
-        fut = loop.run_in_executor(None, worker)
+        fut = loop.run_in_executor(self._exec, worker)
         try:
             while True:
                 item = await queue.get()

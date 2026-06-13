@@ -21,6 +21,14 @@ from typing import Any, Optional
 # The model emits Hermes-style calls: <tool_call>{"name":…,"arguments":{…}}</tool_call>
 _OPEN, _CLOSE = "<tool_call>", "</tool_call>"
 
+# Every user turn is prefixed with a <context> block (clock, recall, news —
+# see memory.preamble). Smaller models imitate it: they echo the block back,
+# or open one and narrate a whole invented turn. It is scaffolding, never
+# something to show or read aloud, so it is swallowed exactly like a tool
+# call — in the stream, so a block split across chunks is never spoken one
+# character at a time.
+_CTX_OPEN, _CTX_CLOSE = "<context>", "</context>"
+
 TOOLS: list[dict] = [
     {
         "type": "function",
@@ -403,7 +411,7 @@ _STRAY_JSON = re.compile(
 
 def _strip_stray_json(text: str) -> str:
     """Drop tool/step objects the model wrote as prose instead of calling."""
-    cleaned = _STRAY_JSON.sub("", text)
+    cleaned = _STRAY_JSON.sub("", text).replace(_CTX_CLOSE, "")
     if cleaned != text:
         print("[tools] dropped stray JSON from prose", flush=True)
     return re.sub(r"[ \t]{2,}", " ", cleaned)
@@ -417,6 +425,7 @@ class ToolStream:
     def __init__(self) -> None:
         self._buf = ""
         self._in_call = False
+        self._in_ctx = False
         self.raw = ""       # everything the model produced, verbatim
 
     def feed(self, chunk: str) -> tuple[str, list[dict]]:
@@ -433,11 +442,32 @@ class ToolStream:
                 self._in_call = False
                 if (call := _parse_call(body)) is not None:
                     calls.append(call)
+            elif self._in_ctx:
+                i = self._buf.find(_CTX_CLOSE)
+                if i == -1:
+                    # Keep only what could still complete the closing tag, so an
+                    # echoed block of any length costs no memory and speaks none
+                    # of itself.
+                    keep = _held(self._buf, _CTX_CLOSE)
+                    self._buf = self._buf[len(self._buf) - keep:] if keep else ""
+                    break
+                self._buf = self._buf[i + len(_CTX_CLOSE):]
+                self._in_ctx = False
             else:
                 i = self._buf.find(_OPEN)
+                j = self._buf.find(_CTX_OPEN)
+                if j != -1 and (i == -1 or j < i):
+                    prose.append(self._buf[:j])
+                    self._buf = self._buf[j + len(_CTX_OPEN):]
+                    self._in_ctx = True
+                    print("[tools] swallowed an echoed <context> block", flush=True)
+                    continue
                 if i == -1:
-                    # Hold back a partial "<tool_ca…" so it is never spoken.
-                    keep = _held(self._buf, _OPEN)
+                    # Hold back a partial "<tool_ca…" / "<contex…" so it is
+                    # never spoken — and a partial "</contex…" too, since an
+                    # orphan closing tag is only strippable once it is whole.
+                    keep = max(_held(self._buf, _OPEN), _held(self._buf, _CTX_OPEN),
+                               _held(self._buf, _CTX_CLOSE))
                     out = self._buf[:len(self._buf) - keep] if keep else self._buf
                     self._buf = self._buf[len(self._buf) - keep:] if keep else ""
                     # Also hold an unterminated "{…" — a stray JSON object can
@@ -462,16 +492,56 @@ class ToolStream:
             body, self._buf, self._in_call = self._buf, "", False
             call = _parse_call(body)
             return "", [call] if call else []
+        if self._in_ctx:
+            # An unterminated echo: the model opened a block and ran out. There
+            # is nothing in it worth saying, so it goes rather than leaking out.
+            self._buf, self._in_ctx = "", False
+            return "", []
         out, self._buf = self._buf, ""
         return _strip_stray_json(out), []
+
+
+# Some fine-tunes emit an XML-ish call instead of Hermes JSON, whatever their
+# chat template advertises:
+#     <function=set_reminder><parameter=title>Call the dentist</parameter></function>
+# Qwen3.5-9B-Defiant does this on every call. Recognising it is additive — the
+# JSON path is tried first and is unchanged — so a model that emits proper
+# Hermes never reaches here.
+_FN_NAME = re.compile(r"<function\s*=\s*([A-Za-z_]\w*)\s*>")
+_FN_ARG = re.compile(r"<parameter\s*=\s*([A-Za-z_]\w*)\s*>(.*?)</parameter\s*>",
+                     re.DOTALL)
+
+
+def _coerce(raw: str):
+    """A parameter block carries no type. Read it as JSON when it plainly is
+    one — `5`, `true`, a list — and otherwise leave it as the string it looks
+    like, so a title of "5" does not silently become a number."""
+    text = raw.strip()
+    if text[:1] in "[{" or text in {"true", "false", "null"} or (
+            text.replace(".", "", 1).lstrip("-").isdigit()):
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError:
+            pass
+    return text
+
+
+def _parse_function_call(body: str) -> Optional[dict]:
+    m = _FN_NAME.search(body)
+    if not m:
+        return None
+    args = {k: _coerce(v) for k, v in _FN_ARG.findall(body)}
+    return {"name": m.group(1), "arguments": args}
 
 
 def _parse_call(body: str) -> Optional[dict]:
     try:
         obj = json.loads(body.strip())
     except json.JSONDecodeError:
-        print(f"[tool] unparseable call: {body.strip()[:120]!r}", flush=True)
-        return None
+        obj = _parse_function_call(body)
+        if obj is None:
+            print(f"[tool] unparseable call: {body.strip()[:120]!r}", flush=True)
+            return None
     name = obj.get("name")
     if name not in TOOL_NAMES:
         print(f"[tool] unknown tool: {name!r}", flush=True)
