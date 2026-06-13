@@ -140,6 +140,25 @@ def _check_cancel() -> None:
 _setup_state: dict = {"phase": "checking"}   # fields only; "type" is added on send
 
 
+def _settings_payload() -> dict:
+    """The settings the app mirrors, including which model is answering.
+
+    Factored out because it is needed in three places now: on connect, after a
+    Save, and after a model switch — that last one was missing, so the chip by
+    the orb went on naming the model that had just been unloaded.
+    """
+    return {
+        "daily_updates": _briefing.enabled,
+        "location": _briefing.place,
+        "lookups": _store.setting("lookups", "0") == "1",
+        "has_web_key": bool(_store.setting("web_key", "")),
+        "web_paused": bool(_store.setting("web_quota_hit", "")),
+        "models": config.local_models(),
+        "model_name": config.model_info(config.LLM_MODEL)["name"],
+        "model_id": config.LLM_MODEL,
+    }
+
+
 async def _broadcast(msg: str) -> None:
     for ws in list(_clients):
         try:
@@ -237,14 +256,7 @@ async def handler(ws) -> None:
     # Push stored settings immediately. Without this the app boots showing its
     # own defaults (all off) while the backend has them on — and the next Save
     # writes those stale defaults back over the real ones.
-    await ws.send(P.encode("settings", daily_updates=_briefing.enabled,
-                           location=_briefing.place,
-                           lookups=_store.setting("lookups", "0") == "1",
-                           has_web_key=bool(_store.setting("web_key", "")),
-                           web_paused=bool(_store.setting("web_quota_hit", "")),
-                           models=config.local_models(),
-                        model_name=config.model_info(config.LLM_MODEL)["name"],
-                        model_id=config.LLM_MODEL))
+    await ws.send(P.encode("settings", **_settings_payload()))
     await session.open_session()          # resume where the user left off
     asyncio.create_task(_refresh_briefing(session))  # never blocks the conversation
     try:
@@ -271,15 +283,7 @@ async def handler(ws) -> None:
                         _store.set_setting("web_key", str(k).strip())
                         _store.set_setting("web_quota_hit", "")
                     asyncio.create_task(_refresh_briefing(session))
-                    await ws.send(P.encode(
-                        "settings", daily_updates=_briefing.enabled,
-                        location=_briefing.place,
-                        lookups=_store.setting("lookups", "0") == "1",
-                        has_web_key=bool(_store.setting("web_key", "")),
-                        web_paused=bool(_store.setting("web_quota_hit", "")),
-                        models=config.local_models(),
-                        model_name=config.model_info(config.LLM_MODEL)["name"],
-                        model_id=config.LLM_MODEL))
+                    await ws.send(P.encode("settings", **_settings_payload()))
                 elif msg["type"] == "session_list":
                     await session.send_sessions()
                 elif msg["type"] == "session_open":
@@ -647,7 +651,8 @@ async def _load_everything(chosen: dict) -> None:
     _overhead_bytes = _base_rss + max(0, sysmem.mlx_active() - _llm_bytes)
     _store.set_setting("overhead_bytes", str(_overhead_bytes))
     _set_setup(phase="ready")
-    print("Fennel ready.", flush=True)
+    await _broadcast(P.encode("settings", **_settings_payload()))
+    print(f"Fennel ready ({chosen['name']}).", flush=True)
 
 
 if __name__ == "__main__":
