@@ -24,6 +24,11 @@ enum Theme {
                  Color(red: 0.67, green: 0.40, blue: 0.95)],
         startPoint: .topLeading, endPoint: .bottomTrailing)
 
+    /// The gradient's first stop as a plain colour, for the places that need a
+    /// `Color` rather than a `ShapeStyle` — a hairline border, a small badge.
+    /// A gradient in a 1pt stroke is invisible anyway.
+    static let accentSolid = Color(red: 0.42, green: 0.44, blue: 0.98)
+
     static func stateColors(_ state: AssistantState, listening: Bool) -> [Color] {
         switch state {
         case .speaking:  return [Color(red: 0.20, green: 0.78, blue: 0.60),

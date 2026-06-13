@@ -103,6 +103,11 @@ async def _refresh_briefing(session: Session) -> None:
 _clients: set = set()
 _consent = asyncio.Event()
 _ready = asyncio.Event()
+# The startup model picker. Shown every launch, because which model is
+# loaded is the single biggest thing about a session and picking it is
+# cheaper than discovering it. `_chosen_model` is set from the UI.
+_model_chosen = asyncio.Event()
+_chosen_model: str = ""
 _setup_state: dict = {"phase": "checking"}   # fields only; "type" is added on send
 
 
@@ -150,8 +155,29 @@ async def handler(ws) -> None:
             async for raw in ws:
                 if isinstance(raw, (bytes, bytearray)):
                     continue
-                if P.decode(raw).get("type") == "setup_consent":
+                m = P.decode(raw)
+                kind = m.get("type")
+                if kind == "setup_consent":
                     _consent.set()
+                elif kind == "model_select":
+                    global _chosen_model
+                    _chosen_model = str(m.get("id", ""))
+                    _model_chosen.set()
+                elif kind == "model_delete":
+                    # Deleting is allowed while the picker is up because nothing
+                    # is loaded yet; once a model is in memory it is protected.
+                    try:
+                        model_setup.delete(
+                            str(m.get("id", "")),
+                            in_use=config.LLM_MODEL if _ready.is_set() else None)
+                        note = ""
+                    except Exception as exc:
+                        note = str(exc)
+                    _set_setup(phase="choose_model",
+                               models=model_setup.catalogue(),
+                               current=_store.setting("llm_model", "")
+                                       or config.DEFAULT_MODEL,
+                               note=note)
 
         pump_task = asyncio.create_task(pump())
         ready_task = asyncio.create_task(_ready.wait())
@@ -282,8 +308,20 @@ async def _watch_parent() -> None:
 
 
 async def _prepare_models() -> None:
-    """Consent, download, load, warm, prime — reporting each step to the app."""
+    """Choose, consent, download, load, warm, prime — reporting each step."""
     global _stt, _llm, _tts, _memory, _system, _system_day
+
+    # Which model, before anything else: the download list, the prime-cache key
+    # and the settings panel all read config.LLM_MODEL, so it is settled first
+    # and only then does anything look at the disk or the network.
+    stored = _store.setting("llm_model", "") or config.DEFAULT_MODEL
+    _set_setup(phase="choose_model", models=model_setup.catalogue(),
+               current=stored, note="")
+    await _model_chosen.wait()
+    config.LLM_MODEL = _chosen_model or stored
+    _store.set_setting("llm_model", config.LLM_MODEL)
+    chosen = config.model_info(config.LLM_MODEL)
+    print(f"[setup] model: {chosen['name']} ({config.LLM_MODEL})", flush=True)
 
     if pending := model_setup.missing():
         size = model_setup.human(model_setup.total_bytes(pending))
