@@ -16,6 +16,7 @@ struct HomeCard: Identifiable {
         case app = "open_app"
         case shortcut = "run_shortcut"
         case newShortcut = "create_shortcut"
+        case image = "generate_image"
 
         var icon: String {
             switch self {
@@ -31,6 +32,7 @@ struct HomeCard: Identifiable {
             case .app: return "app.badge"
             case .shortcut: return "bolt.fill"
             case .newShortcut: return "wand.and.stars"
+            case .image: return "photo.artframe"
             }
         }
 
@@ -48,6 +50,7 @@ struct HomeCard: Identifiable {
             case .app: return .gray
             case .shortcut: return .yellow
             case .newShortcut: return .yellow
+            case .image: return .purple
             }
         }
 
@@ -75,6 +78,10 @@ struct HomeCard: Identifiable {
     var externalID: String?
     /// The normalized tool arguments, kept so Undo can re-create the entry.
     let args: [String: Any]
+    /// A finished picture on disk (`generate_image`), and how far along it is.
+    var imagePath: String?
+    var progress: Double = 0
+    var detail: String = ""
 
     /// Build from a `tool` control frame. Returns nil for a tool with no card.
     init?(id: String, name: String, args: [String: Any]) {
@@ -132,6 +139,11 @@ struct HomeCard: Identifiable {
                 let value = step["value"].map { "\($0)" } ?? ""
                 return value.isEmpty ? type : "\(type): \(value)"
             }
+        case .image:
+            title = args["title"] as? String ?? "Picture"
+            body = args["prompt"] as? String
+            status = .working
+
         case .search:
             let hits = args["results"] as? [[String: Any]] ?? []
             let names = hits.compactMap { $0["title"] as? String }
@@ -249,6 +261,7 @@ struct HomeCardView: View {
                     }
                     .padding(.top, 3)
                 }
+                if card.kind == .image { imageBody }
                 if card.kind == .song { musicButtons }
                 if card.kind == .timer, let ends = card.endsAt { CountdownLabel(ends: ends) }
                 if card.kind == .search, let url = card.searchLink {
@@ -303,6 +316,29 @@ struct HomeCardView: View {
                     .foregroundStyle(left > 0 ? Color.primary : Color.red)
             }
             .padding(.top, 2)
+        }
+    }
+
+    /// A picture takes about a minute, so the card shows how far along it is and
+    /// then becomes the picture. Loaded from disk rather than sent over the
+    /// socket: it is a couple of megabytes and it is already on this machine.
+    @ViewBuilder private var imageBody: some View {
+        if let path = card.imagePath, let img = NSImage(contentsOfFile: path) {
+            Image(nsImage: img)
+                .resizable()
+                .aspectRatio(contentMode: .fit)
+                .frame(maxWidth: 320)
+                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .padding(.top, 6)
+        } else if card.status == .working {
+            VStack(alignment: .leading, spacing: 4) {
+                ProgressView(value: card.progress)
+                    .progressViewStyle(.linear)
+                    .frame(maxWidth: 220)
+                Text(card.detail.isEmpty ? "Starting…" : card.detail)
+                    .font(.system(size: 10)).foregroundStyle(.tertiary)
+            }
+            .padding(.top, 6)
         }
     }
 

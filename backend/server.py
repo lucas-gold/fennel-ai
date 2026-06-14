@@ -68,7 +68,9 @@ def _feature_settings() -> dict[str, bool]:
     """Which optional tools to advertise. The web tool needs a key as well as
     the switch — offering a tool that can only fail teaches the model to fail."""
     on = _store.setting("lookups", "0") == "1"
-    return {"lookups": on, "web_key": on and bool(_store.setting("web_key", ""))}
+    return {"lookups": on,
+            "web_key": on and bool(_store.setting("web_key", "")),
+            "images": _store.setting("images", "0") == "1"}
 
 
 async def _refresh_briefing(session: Session) -> None:
@@ -81,7 +83,10 @@ async def _refresh_briefing(session: Session) -> None:
     global _system, _system_day
     if _briefing.is_stale():
         await asyncio.to_thread(_briefing.build, embed.shared())
-    _llm.tools = tool_list(_feature_settings())
+    # NB: do not touch _llm.tools before the comparison below — assigning here
+    # first made "want_tools == _llm.tools" trivially true, so a toggled feature
+    # never re-primed and the prefix on the KV cache no longer matched the tools
+    # being sent.
     # Re-prime whenever the prefix we *want* differs from the one that's primed,
     # not merely when the fetch was stale: toggling "daily updates" on mid-run
     # leaves a perfectly fresh briefing sitting outside the prefix otherwise.
@@ -156,6 +161,7 @@ def _settings_payload() -> dict:
         "models": config.local_models(),
         "model_name": config.model_info(config.LLM_MODEL)["name"],
         "model_id": config.LLM_MODEL,
+        "images": _store.setting("images", "0") == "1",
     }
 
 
@@ -254,6 +260,7 @@ async def handler(ws) -> None:
 
     session = Session(send_control, send_audio, _stt, _llm, _tts,
                       _store, _memory, system=_current_system())
+    session._on_need_memory = _lend_memory
     _sessions.add(session)
     await ws.send(P.encode("state", value="idle"))
     # Push stored settings immediately. Without this the app boots showing its
@@ -280,6 +287,8 @@ async def handler(ws) -> None:
                                         place=msg.get("location"))
                     if (w := msg.get("lookups")) is not None:
                         _store.set_setting("lookups", "1" if w else "0")
+                    if (g := msg.get("images")) is not None:
+                        _store.set_setting("images", "1" if g else "0")
                     # The key arrives from the app's Keychain. "" clears it, and
                     # a new key clears the quota pause so it is tried again.
                     if (k := msg.get("web_key")) is not None:
@@ -525,6 +534,29 @@ def _picker_fields() -> dict:
         "system_used_bytes": snap["system_used_bytes"],
         "system_total_bytes": snap["system_total_bytes"],
     }
+
+
+async def _lend_memory(release: bool) -> None:
+    """Unload the language model for the duration of something heavier, and
+    load it again afterwards.
+
+    Image generation peaks above what the LLM leaves free on a 16 GB machine,
+    and swapping would cost far more than a reload — which, with the primed
+    prefix now cached per model, is seconds rather than a minute.
+    """
+    global _llm
+    if release:
+        if _llm is not None:
+            print("[image] lending memory: unloading the language model", flush=True)
+            await _drop_llm()
+        return
+    if _llm is None:
+        _llm = await asyncio.to_thread(LLM, config.LLM_MODEL)
+        _llm.tools = tool_list(_feature_settings())
+        await asyncio.to_thread(_llm.prime, _current_system())
+        for sess in list(_sessions):
+            sess.rebind_llm(_llm)
+        print("[image] language model back", flush=True)
 
 
 async def _drop_llm() -> None:

@@ -29,6 +29,15 @@ _OPEN, _CLOSE = "<tool_call>", "</tool_call>"
 # character at a time.
 _CTX_OPEN, _CTX_CLOSE = "<context>", "</context>"
 
+# Qwen3-4B answers "draw me X" by writing an <image_description> block rather
+# than calling generate_image. The persona tells it not to; this makes sure the
+# tag never reaches the screen or the speaker when it does it anyway.
+_DESC_OPEN, _DESC_CLOSE = "<image_description>", "</image_description>"
+
+_LEAD_IN = re.compile(
+    r"^(picture (this|a|an)|imagine( this)?|here('?s| is) (a|an|the)|"
+    r"visualise|visualize|envision)\b[:,]?\s*", re.I)
+
 TOOLS: list[dict] = [
     {
         "type": "function",
@@ -371,9 +380,45 @@ TOOL_NAMES = {t["function"]["name"] for t in TOOLS}
 # stored like any other reply, and then teaches refusal even after the user
 # enables it — which is exactly what happened. If it isn't offered, it can't be
 # tried, so nothing teachable is recorded.
+TOOLS.append({
+    "type": "function",
+    "function": {
+        "name": "generate_image",
+        "description": (
+            "Draw a picture from a description. Use it when the user asks for "
+            "an image, a picture, a drawing, artwork or a photo of something "
+            "that does not exist yet. It takes about a minute, so say you are "
+            "starting it and let the picture arrive on its own — do not "
+            "describe the image you are about to make, and never claim it is "
+            "ready. It cannot edit an existing picture, and it cannot show the "
+            "user something real: for a real place or person, say so and offer "
+            "to look it up instead.\n"
+            "Write the prompt yourself rather than passing the request "
+            "through: a good one names the subject, the setting, the light and "
+            "the kind of photograph or drawing it is. Keep it under 60 words."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "prompt": {
+                    "type": "string",
+                    "description": "A full visual description of the picture to draw.",
+                },
+                "subject": {
+                    "type": "string",
+                    "description": "Two or three words naming it, for the card title.",
+                },
+            },
+            "required": ["prompt"],
+        },
+    },
+})
+
+
 OPTIONAL_TOOLS = {
     "search_wikipedia": "lookups",   # the free one; on with the Look things up switch
     "search_web": "web_key",         # additionally needs the user's own API key
+    "generate_image": "images",      # off until the user switches pictures on
 }
 
 
@@ -460,6 +505,12 @@ class ToolStream:
         self._buf = ""
         self._in_call = False
         self._in_ctx = False
+        self._ctx_close = _CTX_CLOSE
+        #: Text from an <image_description> block, if the model wrote one
+        #: instead of calling generate_image. Kept rather than dropped: it is a
+        #: perfectly good prompt, and using it is more reliable than persuading
+        #: a 4B to call the tool.
+        self.image_description = ""
         # A swallowed block leaves the newline that followed it, which renders
         # as a blank first line in the bubble — it reads as stray padding above
         # the reply. Trim once, on the next prose to actually arrive.
@@ -481,32 +532,50 @@ class ToolStream:
                 if (call := _parse_call(body)) is not None:
                     calls.append(call)
             elif self._in_ctx:
-                i = self._buf.find(_CTX_CLOSE)
+                i = self._buf.find(self._ctx_close)
                 if i == -1:
                     # Keep only what could still complete the closing tag, so an
                     # echoed block of any length costs no memory and speaks none
                     # of itself.
-                    keep = _held(self._buf, _CTX_CLOSE)
+                    keep = _held(self._buf, self._ctx_close)
+                    if getattr(self, "_grabbing_desc", False):
+                        # Everything except the held tail: that tail may yet turn
+                        # out to be the closing tag, and capturing it would put
+                        # "</im" into the image prompt.
+                        self.image_description += (
+                            self._buf[:len(self._buf) - keep] if keep else self._buf)
                     self._buf = self._buf[len(self._buf) - keep:] if keep else ""
                     break
-                self._buf = self._buf[i + len(_CTX_CLOSE):]
+                if getattr(self, "_grabbing_desc", False):
+                    self.image_description += self._buf[:i]
+                    self._grabbing_desc = False
+                self._buf = self._buf[i + len(self._ctx_close):]
                 self._in_ctx = False
                 self._trim_next = True
             else:
                 i = self._buf.find(_OPEN)
                 j = self._buf.find(_CTX_OPEN)
+                d = self._buf.find(_DESC_OPEN)
+                if d != -1 and (j == -1 or d < j):
+                    j = d
                 if j != -1 and (i == -1 or j < i):
                     prose.append(self._buf[:j])
-                    self._buf = self._buf[j + len(_CTX_OPEN):]
+                    tag = (_DESC_OPEN if self._buf.startswith(_DESC_OPEN, j)
+                           else _CTX_OPEN)
+                    self._ctx_close = (_DESC_CLOSE if tag is _DESC_OPEN
+                                       else _CTX_CLOSE)
+                    self._buf = self._buf[j + len(tag):]
+                    self._grabbing_desc = tag is _DESC_OPEN
                     self._in_ctx = True
-                    print("[tools] swallowed an echoed <context> block", flush=True)
+                    print(f"[tools] swallowed an echoed {tag} block", flush=True)
                     continue
                 if i == -1:
                     # Hold back a partial "<tool_ca…" / "<contex…" so it is
                     # never spoken — and a partial "</contex…" too, since an
                     # orphan closing tag is only strippable once it is whole.
                     keep = max(_held(self._buf, _OPEN), _held(self._buf, _CTX_OPEN),
-                               _held(self._buf, _CTX_CLOSE))
+                               _held(self._buf, _CTX_CLOSE),
+                               _held(self._buf, _DESC_OPEN))
                     out = self._buf[:len(self._buf) - keep] if keep else self._buf
                     self._buf = self._buf[len(self._buf) - keep:] if keep else ""
                     # Also hold an unterminated "{…" — a stray JSON object can
@@ -544,6 +613,9 @@ class ToolStream:
             call = _parse_call(body)
             return "", [call] if call else []
         if self._in_ctx:
+            if getattr(self, "_grabbing_desc", False):
+                self.image_description += self._buf
+                self._grabbing_desc = False
             # An unterminated echo: the model opened a block and ran out. There
             # is nothing in it worth saying, so it goes rather than leaking out.
             self._buf, self._in_ctx = "", False
@@ -657,6 +729,22 @@ def normalize(name: str, args: dict) -> tuple[dict, dict]:
         card = {"title": title, "start": start.isoformat(), "end": end.isoformat(),
                 "location": str(args.get("location", "")).strip() or None}
         result = {"ok": True, "title": title, "start": human_time(start, now)}
+        return card, result
+
+    if name == "generate_image":
+        prompt = " ".join(str(args.get("prompt", "")).split())
+        # Models that describe rather than call open with a stage direction.
+        # It belongs in neither the title nor the prompt.
+        prompt = _LEAD_IN.sub("", prompt).strip()
+        if not prompt:
+            return {}, {"ok": False, "error": "no description given; ask what to draw"}
+        title = str(args.get("subject", "")).strip() or " ".join(prompt.split()[:5])
+        card = {"title": title[:60], "prompt": prompt[:600]}
+        # The result the model sees is deliberately not "done": the picture is
+        # still a minute away, and a model told the tool succeeded will happily
+        # announce a picture nobody can see yet.
+        result = {"ok": True, "status": "started",
+                  "note": "the picture is being drawn and will appear on its own"}
         return card, result
 
     if name == "show_panel":
