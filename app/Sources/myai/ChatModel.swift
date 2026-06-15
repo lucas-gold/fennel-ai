@@ -82,6 +82,15 @@ final class ChatModel: ObservableObject {
     /// The SwiftUI app's own resident size. A separate process from the
     /// backend, so it has to be added in rather than assumed included.
     @Published var appBytes = 0
+    /// Subprocesses the backend spawned — image generation, which is where
+    /// most of the memory goes while it runs.
+    @Published var childBytes = 0
+    /// Set while the language model is unloaded so something heavier can run.
+    /// The composer and the mic are disabled for the duration — there is
+    /// nothing to answer with, and a message typed into the void is worse than
+    /// a disabled box that says why.
+    @Published var busy = false
+    @Published var busyDetail = ""
     /// The model in use, for the chip beside the composer.
     @Published var modelName = ""
     @Published var modelID = ""
@@ -227,6 +236,9 @@ final class ChatModel: ObservableObject {
             if let u = msg["system_used_bytes"] as? Int { systemUsedBytes = u }
             if let t = msg["system_total_bytes"] as? Int { systemTotalBytes = t }
             setupNote = msg["note"] as? String ?? ""
+        case "busy":
+            busy = msg["busy"] as? Bool ?? false
+            busyDetail = msg["detail"] as? String ?? ""
         case "card_update":
             applyCardUpdate(msg)
         case "memory":
@@ -235,6 +247,7 @@ final class ChatModel: ObservableObject {
             systemUsedBytes = msg["system_used_bytes"] as? Int ?? 0
             systemTotalBytes = msg["system_total_bytes"] as? Int ?? 0
             appBytes = msg["app_bytes"] as? Int ?? appBytes
+            childBytes = msg["child_bytes"] as? Int ?? childBytes
         case "settings":
             dailyUpdates = msg["daily_updates"] as? Bool ?? false
             location = msg["location"] as? String ?? ""

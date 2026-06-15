@@ -64,6 +64,26 @@ def _rss_of(pid: int) -> int:
         return 0
 
 
+def _children_rss() -> int:
+    """Resident size of everything this process spawned.
+
+    Image generation runs in a subprocess, so while it draws — the very moment
+    memory is worth watching — none of it showed up in our own figures.
+    """
+    try:
+        out = subprocess.check_output(
+            ["ps", "-o", "rss=,ppid=", "-A"], text=True)
+    except Exception:
+        return 0
+    me = os.getpid()
+    total = 0
+    for line in out.splitlines():
+        parts = line.split()
+        if len(parts) == 2 and parts[1].isdigit() and int(parts[1]) == me:
+            total += int(parts[0]) * 1024
+    return total
+
+
 def _app_rss() -> int:
     """The SwiftUI app, which is a separate process from this one.
 
@@ -128,6 +148,7 @@ def snapshot(min_interval: float = 1.5) -> dict:
         "mlx_active_bytes": active,
         "process_bytes": _rss(),
         "app_bytes": _app_rss(),
+        "child_bytes": _children_rss(),
         "system_used_bytes": used,
         "system_total_bytes": total,
     }

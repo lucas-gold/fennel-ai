@@ -71,6 +71,7 @@ private struct FirstRunOverlay: View {
         func gb(_ n: Int) -> String { String(format: "%.1f", Double(n) / 1_073_741_824) }
         let free = max(0, chat.systemTotalBytes - chat.systemUsedBytes)
         let fennel = chat.modelBytes + chat.overheadBytes + chat.appBytes
+                   + chat.childBytes
         let mine = fennel > 0 ? "Fennel \(gb(fennel)) GB  ·  " : ""
         return mine + "\(gb(chat.systemUsedBytes)) GB used  ·  \(gb(free)) GB free"
     }
@@ -259,7 +260,8 @@ private struct HomePanel: View {
             Spacer(minLength: 0)
             VStack(spacing: 14) {
                 VoiceOrb(state: orbState, listening: chat.listening, level: chat.level)
-                    .onTapGesture { chat.toggleListening() }
+                    .opacity(chat.busy ? 0.45 : 1)
+                    .onTapGesture { if !chat.busy { chat.toggleListening() } }
                 Text(statusLine)
                     .font(.system(size: 12, weight: .medium))
                     .foregroundStyle(.secondary)
@@ -307,11 +309,13 @@ private struct HomePanel: View {
         func gb(_ n: Int) -> String { String(format: "%.1f", Double(n) / 1_073_741_824) }
         let free = max(0, chat.systemTotalBytes - chat.systemUsedBytes)
         let fennel = chat.modelBytes + chat.overheadBytes + chat.appBytes
+                   + chat.childBytes
         let mine = fennel > 0 ? "Fennel \(gb(fennel)) GB  ·  " : ""
         return mine + "\(gb(chat.systemUsedBytes)) GB used  ·  \(gb(free)) GB free"
     }
 
     private var statusLine: String {
+        if chat.busy { return chat.busyDetail.isEmpty ? "Working…" : chat.busyDetail }
         switch orbState {
         case .speaking: return "Speaking"
         case .thinking: return "Thinking"
@@ -601,12 +605,14 @@ private struct ChatPanel: View {
                 // ate into the text. The cap of 5 lines also cut off a message
                 // still being typed — 14 is roughly a third of the window and
                 // scrolls past that.
-                TextField("Message", text: $draft, axis: .vertical)
+                TextField(chat.busy ? chat.busyDetail : "Message",
+                          text: $draft, axis: .vertical)
                     .textFieldStyle(.plain)
                     .font(.system(size: 13))
                     .lineLimit(1...14)
                     .focused($focused)
                     .onSubmit(send)
+                    .disabled(chat.busy)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, 14)
                     .padding(.vertical, 9)
@@ -626,7 +632,8 @@ private struct ChatPanel: View {
                                           : AnyShapeStyle(Theme.accent)))
                 }
                 .buttonStyle(.plain)
-                .disabled(draft.trimmingCharacters(in: .whitespaces).isEmpty)
+                .disabled(chat.busy
+                          || draft.trimmingCharacters(in: .whitespaces).isEmpty)
                 .animation(.easeOut(duration: 0.15), value: draft.isEmpty)
             }
             .padding(.horizontal, 18)

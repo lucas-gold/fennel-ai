@@ -50,6 +50,17 @@ LEAD_INS = {
 # A request to write something the user will send or keep. Drafting is the one
 # task where conversational temperature measurably hurts: the padding a warm
 # sampler adds is exactly where the invented details live (D-DRAFT).
+# "Draw me a X" is unmistakable, and whether it becomes a picture should not
+# depend on a 4B choosing to call a tool this time. If the user plainly asked
+# and no image was raised, the request is honoured from their own words.
+_DRAWY = re.compile(
+    r"\b(draw|sketch|paint|generate|create|make|render|show)\b[^.?!]{0,24}?"
+    r"\b(image|picture|photo|photograph|drawing|painting|artwork|illustration)\b"
+    r"|\bimagine\s+(a|an|the)\b"
+    # The bare imperative — "draw a red barn". Requires an article after the
+    # verb, which is what separates it from "draw your own conclusions".
+    r"|^\s*(please\s+)?(draw|sketch|paint|render)\s+(me\s+)?(a|an|the)\b", re.I)
+
 _DRAFTY = re.compile(
     r"\b(write|draft|compose|reword|rewrite|edit|proofread)\b[^.?!]{0,40}?"
     r"\b(email|e-mail|message|note|letter|text|reply|response|memo|post|"
@@ -468,6 +479,15 @@ class Session:
         # typed message showed no thinking state and no typing indicator — the
         # window just sat there looking stuck.
         await self._send_control(P.encode("state", value="thinking"))
+
+        # The language model may have stepped aside so a picture could be drawn
+        # (see _draw_image). Answer plainly instead of calling into an object
+        # whose weights have been freed — that used to leave the conversation
+        # dead until the image finished.
+        if self._llm is None or not self._llm.available:
+            await self._hold_the_line(epoch, text, do_speak)
+            return
+
         if from_voice:
             text = await asyncio.to_thread(self._stt.transcribe, audio)
             print(f"[stt] -> {text!r}", flush=True)
@@ -654,9 +674,15 @@ class Session:
             # no amount of telling them otherwise fixes it. The block is a
             # perfectly good prompt, so use it: the user asked for a picture and
             # gets one, rather than an empty reply where the tag was stripped.
-            if (self._image_desc and self._live(epoch)
-                    and not any(c["name"] == "generate_image" for c in calls)
-                    and self._store.setting("images", "0") == "1"):
+            drew = any(c["name"] == "generate_image" for c in calls)
+            want_image = (self._store.setting("images", "0") == "1"
+                          and not drew and self._live(epoch)
+                          and (self._image_desc or _DRAWY.search(text or "")))
+            if want_image:
+                # Prefer the model's own description — it is a richer prompt
+                # than the bare request — but fall back to what the user said,
+                # so asking plainly always produces a picture.
+                self._image_desc = self._image_desc or (text or "")
                 if not visible.strip():
                     # The whole reply was the description, which is stripped —
                     # so without this the user gets an empty bubble and a card
@@ -681,6 +707,31 @@ class Session:
                 partial = (spoken.strip() + " —").strip()
                 self._messages.append({"role": "assistant", "content": partial})
                 self._commit(turn_start, partial)
+
+    async def _hold_the_line(self, epoch: int, text: Optional[str],
+                             do_speak: bool) -> None:
+        """Reply while the model is set aside for image generation.
+
+        A canned sentence rather than silence: the user typed something, and a
+        chat that stops answering reads as broken. What they said is kept, so
+        the model sees it once it is back.
+        """
+        # A backstop only: the app disables the composer while `busy` is set,
+        # so this should never be reached. It exists because "should never" and
+        # "cannot" are different, and the alternative is a crash.
+        line = "One moment — I'm drawing that picture."
+        self._turn_no += 1
+        turn = self._turn_no
+        if text:
+            self._messages.append({"role": "user", "content": text})
+        await self._send_control(P.encode("token", turn=turn, text=line))
+        if do_speak:
+            pcm = await asyncio.to_thread(self._tts.synth_pcm, line)
+            if pcm.size and self._live(epoch):
+                await self._send_control(P.encode("state", value="speaking"))
+                await self._send_audio(P.pack_audio(turn, 0, pcm))
+        await self._send_control(P.encode("turn_end", turn=turn))
+        await self._send_control(P.encode("state", value="idle"))
 
     async def _draw_described(self, description: str) -> None:
         """Raise an image card for a description the model wrote instead of

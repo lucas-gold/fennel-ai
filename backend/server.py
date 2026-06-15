@@ -398,7 +398,7 @@ async def _broadcast_memory() -> None:
         # Fall back the same way the picker does: during a load the real
         # figure has not been taken yet, and reporting zero made the loading
         # screen quote the model alone while the chat quoted everything.
-        snap = dict(sysmem.snapshot(), llm_bytes=_llm_bytes,
+        snap = dict(sysmem.snapshot(0), llm_bytes=_llm_bytes,
                     overhead_bytes=(_overhead_bytes
                                     or int(_store.setting("overhead_bytes", "0") or 0)
                                     or config.OVERHEAD_ESTIMATE_BYTES))
@@ -548,6 +548,9 @@ async def _lend_memory(release: bool) -> None:
     if release:
         if _llm is not None:
             print("[image] lending memory: unloading the language model", flush=True)
+            await _broadcast(P.encode(
+                "busy", busy=True,
+                detail="Generating image — the language model is paused"))
             await _drop_llm()
         return
     if _llm is None:
@@ -557,6 +560,7 @@ async def _lend_memory(release: bool) -> None:
         for sess in list(_sessions):
             sess.rebind_llm(_llm)
         print("[image] language model back", flush=True)
+    await _broadcast(P.encode("busy", busy=False, detail=""))
 
 
 async def _drop_llm() -> None:
