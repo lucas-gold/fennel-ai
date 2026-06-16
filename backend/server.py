@@ -184,6 +184,7 @@ async def handler(ws) -> None:
                     _chosen_model = str(m.get("id", ""))
                     _model_chosen.set()
                 elif kind == "model_cancel":
+                    print("[setup] cancel requested", flush=True)
                     _cancel_load.set()
                 elif kind == "model_delete":
                     # Deleting is allowed while the picker is up because nothing
@@ -283,6 +284,7 @@ async def handler(ws) -> None:
                     _chosen_model = str(msg.get("id", ""))
                     _model_chosen.set()
                 elif msg["type"] == "model_cancel":
+                    print("[setup] cancel requested", flush=True)
                     _cancel_load.set()
                 elif msg["type"] == "model_delete":
                     try:
@@ -385,12 +387,13 @@ async def _switch_model() -> None:
     change unloads, and it unloads *before* loading the replacement — on a 24 GB
     machine two sets of weights do not fit at once.
     """
-    global _llm, _chosen_model, _system, _system_day
+    global _chosen_model
 
     if not _ready.is_set():
         return                       # already in setup; nothing to reopen
     was = config.LLM_MODEL
     _model_chosen.clear()
+    _cancel_load.clear()
     _chosen_model = ""
     _ready.clear()
     _set_setup(phase="choose_model", models=model_setup.catalogue(),
@@ -403,83 +406,51 @@ async def _switch_model() -> None:
         _set_setup(phase="ready")
         return
 
+    print(f"[setup] switching to {config.model_info(pick)['name']}", flush=True)
     config.LLM_MODEL = pick
     _store.set_setting("llm_model", pick)
-    chosen = config.model_info(pick)
-    print(f"[setup] switching to {chosen['name']} ({pick})", flush=True)
-
-    try:
-        if model_setup.missing():
-            size = model_setup.human(model_setup.total_bytes())
-            _consent.clear()
-            _set_setup(phase="needs_consent", size=size,
-                       detail=f"{chosen['name']} needs downloading first.")
-            await _consent.wait()
-            _set_setup(phase="downloading", progress=0.0, detail="Starting…",
-                       size=size)
-            loop = asyncio.get_running_loop()
-
-            def report(what: str, done: int, total: int) -> None:
-                frac = 0.0 if total <= 0 else min(1.0, done / total)
-                loop.call_soon_threadsafe(partial(
-                    _set_setup, phase="downloading", progress=frac, size=size,
-                    detail=f"Downloading the {what} — "
-                           f"{model_setup.human(done)} of "
-                           f"{model_setup.human(total)}"))
-
-            await asyncio.to_thread(model_setup.download, report)
-
-        # Old weights out before new weights in.
-        _set_setup(phase="loading", detail=f"Unloading {config.model_info(was)['name']}",
-                   loaded="")
-        old, _llm = _llm, None
-        await asyncio.to_thread(old.unload)
-        del old
-
-        _set_setup(phase="loading",
-                   detail=f"Loading {chosen['detail'] or chosen['name']}",
-                   loaded="")
-        _llm = await asyncio.to_thread(LLM, pick)
-        _llm.tools = tool_list(_feature_settings())
-        _set_setup(phase="loading", detail="Warming up — compiling GPU kernels")
-        await asyncio.to_thread(_llm.warmup)
-        _system, _system_day = _build_system(), date.today()
-        _set_setup(phase="loading", detail="Preparing the conversation…")
-        await asyncio.to_thread(_llm.prime, _system)
-
-        # Every open conversation is still pointing at the model that just left.
-        for sess in list(_sessions):
-            sess.rebind_llm(_llm)
-    except Exception as exc:
-        traceback.print_exc()
-        _set_setup(phase="failed",
-                   detail=f"Couldn't switch model: {exc}. Reopen Fennel to try "
-                          "again.")
-        return
-
-    _set_setup(phase="ready")
-    print(f"Fennel ready ({chosen['name']}).", flush=True)
+    _set_setup(phase="loading",
+               detail=f"Unloading {config.model_info(was)['name']}", loaded="")
+    await _drop_llm()
+    # Same loop as first boot, so Cancel behaves identically here: it drops the
+    # half-loaded model and puts the picker back, rather than leaving the app
+    # with no model at all.
+    await _choose_and_load()
+    for sess in list(_sessions):
+        sess.rebind_llm(_llm)
 
 
 async def _prepare_models() -> None:
-    """Choose a model, then load everything, retrying if a load is cancelled."""
+    """First boot: settle on a model and load everything it needs."""
+    await _choose_and_load()
 
-    # Which model, before anything else: the download list, the prime-cache key
-    # and the settings panel all read config.LLM_MODEL, so it is settled first
-    # and only then does anything look at the disk or the network.
-    #
-    # The picker is skipped when last launch's model is still on disk — it is
-    # reachable from the chat, so making everyone pass through it every time was
-    # a toll rather than a choice. Cancelling a load brings it back.
+
+async def _choose_and_load() -> None:
+    """Settle on a model and load it, returning to the picker if cancelled.
+
+    Shared by first boot and by switching from the chat, so Cancel behaves the
+    same in both: it drops whatever had loaded and puts the picker back, rather
+    than leaving the app running with no model at all.
+
+    The picker is skipped when last launch's model is still on disk — it is
+    reachable from the chat, so passing through it every launch was a toll
+    rather than a choice.
+    """
     global _chosen_model
     force_picker = False
     while True:
-        stored = _store.setting("llm_model", "") or config.DEFAULT_MODEL
+        stored = config.LLM_MODEL if force_picker else (
+            _store.setting("llm_model", "") or config.DEFAULT_MODEL)
         if not force_picker and model_setup.installed(stored):
             config.LLM_MODEL = stored
         else:
             _model_chosen.clear()
             _chosen_model = ""
+            # The only place the cancel flag is reset. Clearing it before each
+            # load instead threw away a Cancel pressed while the old model was
+            # still unloading, which is exactly when it gets pressed — the
+            # button had no effect at all.
+            _cancel_load.clear()
             _set_setup(phase="choose_model", models=model_setup.catalogue(),
                        current=stored, note="")
             await _model_chosen.wait()
@@ -487,16 +458,15 @@ async def _prepare_models() -> None:
         _store.set_setting("llm_model", config.LLM_MODEL)
         chosen = config.model_info(config.LLM_MODEL)
         print(f"[setup] model: {chosen['name']} ({config.LLM_MODEL})", flush=True)
-        _cancel_load.clear()
         try:
             await _load_everything(chosen)
         except _Cancelled:
             print("[setup] load cancelled; back to the picker", flush=True)
+            _set_setup(phase="loading", detail="Cancelling…", loaded="")
             await _drop_llm()
             force_picker = True
             continue
         break
-
 
 
 async def _drop_llm() -> None:
@@ -614,6 +584,7 @@ async def _load_everything(chosen: dict) -> None:
     # wait: the primed KV state is restored from disk in ~0.06 s instead of the
     # ~15 s it takes to recompute (D-PRIMECACHE). Only the first launch after
     # the briefing changes pays the full cost.
+    _check_cancel()
     _set_setup(phase="loading", detail="Preparing the conversation…",
                loaded=f"{total_gb:.1f} GB in memory",
                eta=max(1.0, eta - (time.monotonic() - started)))
