@@ -107,17 +107,30 @@ private struct FirstRunOverlay: View {
             }
 
         case "downloading":
-            VStack(spacing: 10) {
-                Text("Downloading").font(Theme.title(15, .semibold))
-                ProgressView(value: chat.setupProgress)
-                    .progressViewStyle(.linear)
-                    .frame(width: 300)
-                Text(chat.setupDetail.isEmpty ? "Starting…" : chat.setupDetail)
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
-                    .monospacedDigit()
-                Text("You can leave this running — it only happens once.")
+            VStack(spacing: 12) {
+                Text("Downloading \(chat.modelName.isEmpty ? "models" : chat.modelName)")
+                    .font(Theme.title(16, .semibold))
+                VStack(spacing: 6) {
+                    ProgressView(value: chat.setupProgress)
+                        .progressViewStyle(.linear)
+                        .frame(width: 340)
+                    HStack {
+                        Text(chat.setupDetail.isEmpty ? "Starting…" : chat.setupDetail)
+                            .font(.system(size: 11)).foregroundStyle(.secondary)
+                            .monospacedDigit()
+                            .lineLimit(1)
+                        Spacer(minLength: 12)
+                        // The percentage, plainly. A bar alone gives no sense of
+                        // whether a multi-gigabyte download is worth waiting out.
+                        Text("\(Int(chat.setupProgress * 100))%")
+                            .font(.system(size: 11, weight: .semibold).monospacedDigit())
+                            .foregroundStyle(.secondary)
+                    }
+                    .frame(width: 340)
+                }
+                Text("Downloads once, then it works offline. You can leave this running.")
                     .font(.system(size: 10)).foregroundStyle(.tertiary)
+                    .multilineTextAlignment(.center)
             }
 
         case "failed":
@@ -548,7 +561,26 @@ private struct ChatPanel: View {
             .padding(.horizontal, 18)
             .padding(.top, 12)
 
-            HStack {
+            HStack(spacing: 12) {
+                // Which model is answering, where you can see it while typing.
+                // Clicking it reopens the picker; the running model stays in
+                // memory, so coming back to the same one costs nothing.
+                Button { chat.reopenModelPicker() } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "arrow.triangle.2.circlepath")
+                            .font(.system(size: 9, weight: .semibold))
+                        Text(chat.modelName.isEmpty ? "Model" : chat.modelName)
+                            .font(.system(size: 10, weight: .medium))
+                    }
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 3)
+                    .background(Capsule().fill(Theme.bubble))
+                    .contentShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .help("Switch model")
+
                 Toggle("Speak typed replies", isOn: $chat.speakTypedReplies)
                     .toggleStyle(.checkbox)
                     .controlSize(.small)
@@ -637,20 +669,12 @@ private struct MessageRow: View {
     }
 
     var body: some View {
-        HStack(spacing: 0) {
-            if message.role == .user { Spacer(minLength: 28) }
+        HStack {
+            if message.role == .user { Spacer(minLength: 70) }
             Text(rendered)
                 .font(.system(size: 13.5))
                 .lineSpacing(3)
                 .textSelection(.enabled)
-                // Cap the measure. A fixed 70pt gutter was the only thing
-                // limiting line length, so on a wide window a paragraph ran the
-                // full column and became unreadable; maxWidth lets short
-                // bubbles keep hugging their text while long ones wrap at a
-                // sane measure. fixedSize stops the last line being clipped
-                // when the row is laid out before its height is known.
-                .frame(maxWidth: 620, alignment: .leading)
-                .fixedSize(horizontal: false, vertical: true)
                 .padding(.horizontal, 15)
                 .padding(.vertical, 11)
                 .background {
@@ -661,7 +685,7 @@ private struct MessageRow: View {
                 }
                 .foregroundStyle(message.role == .user ? AnyShapeStyle(.white)
                                                        : AnyShapeStyle(.primary))
-            if message.role == .assistant { Spacer(minLength: 28) }
+            if message.role == .assistant { Spacer(minLength: 70) }
         }
         .transition(.opacity.combined(with: .move(edge: .bottom)))
     }

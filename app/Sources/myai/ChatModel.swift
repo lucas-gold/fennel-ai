@@ -71,6 +71,9 @@ final class ChatModel: ObservableObject {
     @Published var setupModels: [ModelOption] = []
     @Published var setupCurrent = ""      // which one is preselected
     @Published var setupNote = ""         // e.g. why a delete was refused
+    /// The model in use, for the chip beside the composer.
+    @Published var modelName = ""
+    @Published var modelID = ""
     /// Set once the backend has sent this session's history, so the window is
     /// never revealed as an empty chat that fills in a moment later.
     @Published var sessionLoaded = false
@@ -203,6 +206,8 @@ final class ChatModel: ObservableObject {
             dailyUpdates = msg["daily_updates"] as? Bool ?? false
             location = msg["location"] as? String ?? ""
             lookups = msg["lookups"] as? Bool ?? false
+            modelName = msg["model_name"] as? String ?? modelName
+            modelID = msg["model_id"] as? String ?? modelID
             hasWebKey = msg["has_web_key"] as? Bool ?? false
             webPaused = msg["web_paused"] as? Bool ?? false
             localModels = msg["models"] as? String ?? ""
@@ -254,6 +259,12 @@ final class ChatModel: ObservableObject {
     /// so nothing is guessed here about what is left on disk.
     func deleteModel(_ id: String) {
         client.send(Wire.encode("model_delete", ["id": id]))
+    }
+
+    /// Back to the picker without leaving the app. The running model stays
+    /// loaded — choosing the same one again should cost nothing.
+    func reopenModelPicker() {
+        client.send(Wire.encode("model_reopen"))
     }
 
     func newSession()            { client.send(Wire.encode("session_new")) }

@@ -9,6 +9,7 @@ doubles time-to-first-token.
 from __future__ import annotations
 
 import asyncio
+import gc
 import glob
 import hashlib
 import os
@@ -38,7 +39,12 @@ def _common_prefix(a: list[int], b: list[int]) -> int:
 
 
 class LLM:
-    def __init__(self, model_id: str = config.LLM_MODEL) -> None:
+    def __init__(self, model_id: Optional[str] = None) -> None:
+        # Resolved here, not as a default argument: a default is bound once when
+        # the class is defined, so `config.LLM_MODEL = chosen` at startup would
+        # have been ignored and the picker would have silently loaded whatever
+        # the module held at import time.
+        model_id = model_id or config.LLM_MODEL
         # The one thread MLX is allowed to see. mlx-lm generates inside a
         # module-level `generation_stream`, and MLX registers streams per
         # thread: arrays produced on one thread cannot be evaluated on another
@@ -105,6 +111,30 @@ class LLM:
             return
         print(f"[llm] added {declared!r} ({token_id}) to the stop tokens — the "
               "model config omitted it", flush=True)
+
+    def unload(self) -> None:
+        """Give the weights back before another model is loaded.
+
+        On a 24 GB machine two models do not fit at once, so a swap has to free
+        the first completely rather than trusting the allocator to catch up:
+        drop the KV cache and the weights, collect, and empty MLX's buffer pool.
+        The freeing runs on the MLX thread — the same one that allocated it —
+        and the executor is retired afterwards, so this instance is finished.
+        """
+        def _free() -> None:
+            self._cache = None
+            self._cached_ids = []
+            self.model = None
+            self.tokenizer = None
+            gc.collect()
+            mx.clear_cache()
+        try:
+            self._on_mlx(_free)
+        except Exception as exc:
+            print(f"[llm] unload: {exc}", flush=True)
+        finally:
+            self._exec.shutdown(wait=True)
+        print("[llm] unloaded", flush=True)
 
     def _on_mlx(self, fn, *args, **kwargs):
         """Run `fn` on the one thread MLX is allowed to see, and wait for it."""

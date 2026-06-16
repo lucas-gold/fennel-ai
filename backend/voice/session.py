@@ -651,6 +651,18 @@ class Session:
                 self._messages.append({"role": "assistant", "content": partial})
                 self._commit(turn_start, partial)
 
+    def rebind_llm(self, llm: LLM) -> None:
+        """Point this conversation at a newly loaded model.
+
+        A Session captures the LLM when it is built, so switching models without
+        this would leave every open connection talking to the old weights — and
+        holding the reference that stops them being freed. The KV cache belongs
+        to the old model and cannot carry over, so the new one starts cold and
+        re-prefills on the next turn.
+        """
+        self._llm = llm
+        self._llm.reset()
+
     def _window_over_budget(self) -> bool:
         return len(self._messages) > config.VERBATIM_TURNS * 4 + 2
 

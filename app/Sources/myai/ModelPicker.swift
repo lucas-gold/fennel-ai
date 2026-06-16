@@ -17,6 +17,10 @@ struct ModelPicker: View {
     /// always means a minute of loading, which is far too much to hang on a
     /// stray click in a list.
     @State private var pending: String?
+    /// Which row is asking "delete?". Deleting means re-downloading gigabytes
+    /// to undo, so it asks first — and asks in place, because a sheet over a
+    /// list this small hides the thing being talked about.
+    @State private var confirmingDelete: String?
 
     var body: some View {
         VStack(spacing: 14) {
@@ -52,7 +56,7 @@ struct ModelPicker: View {
     }
 
     private func row(_ m: ModelOption) -> some View {
-        Button { pending = m.id } label: { rowBody(m) }
+        Button { pending = m.id; confirmingDelete = nil } label: { rowBody(m) }
             .buttonStyle(.plain)
     }
 
@@ -163,15 +167,30 @@ struct ModelPicker: View {
                 .foregroundStyle(m.id == (pending ?? chat.setupCurrent)
                                  ? Theme.accentSolid : Color.secondary.opacity(0.4))
             if m.installed {
-                Button { chat.deleteModel(m.id) } label: {
-                    Image(systemName: "trash")
-                        .font(.system(size: 10))
-                        .foregroundStyle(.secondary)
-                        .frame(width: 20, height: 20)
-                        .contentShape(Rectangle())
+                if confirmingDelete == m.id {
+                    HStack(spacing: 4) {
+                        Button("Delete") {
+                            chat.deleteModel(m.id)
+                            confirmingDelete = nil
+                        }
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(Color.red)
+                        Button("Cancel") { confirmingDelete = nil }
+                            .font(.system(size: 10))
+                            .foregroundStyle(Color.secondary)
+                    }
+                    .buttonStyle(.plain)
+                } else {
+                    Button { confirmingDelete = m.id } label: {
+                        Image(systemName: "trash")
+                            .font(.system(size: 10))
+                            .foregroundStyle(.secondary)
+                            .frame(width: 20, height: 20)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .help("Delete this download")
                 }
-                .buttonStyle(.plain)
-                .help("Delete this download")
             }
         }
     }
