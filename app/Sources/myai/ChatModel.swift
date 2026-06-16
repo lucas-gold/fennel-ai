@@ -74,6 +74,12 @@ final class ChatModel: ObservableObject {
     /// The model in use, for the chip beside the composer.
     @Published var modelName = ""
     @Published var modelID = ""
+    /// Live memory, pushed by the backend every couple of seconds. `modelBytes`
+    /// is what MLX actually holds — RSS understates it, because weights are
+    /// mapped and only count once touched.
+    @Published var modelBytes = 0
+    @Published var systemUsedBytes = 0
+    @Published var systemTotalBytes = 0
     /// Set once the backend has sent this session's history, so the window is
     /// never revealed as an empty chat that fills in a moment later.
     @Published var sessionLoaded = false
@@ -202,6 +208,10 @@ final class ChatModel: ObservableObject {
             }
             setupCurrent = msg["current"] as? String ?? setupCurrent
             setupNote = msg["note"] as? String ?? ""
+        case "memory":
+            modelBytes = msg["model_bytes"] as? Int ?? 0
+            systemUsedBytes = msg["system_used_bytes"] as? Int ?? 0
+            systemTotalBytes = msg["system_total_bytes"] as? Int ?? 0
         case "settings":
             dailyUpdates = msg["daily_updates"] as? Bool ?? false
             location = msg["location"] as? String ?? ""
@@ -265,6 +275,12 @@ final class ChatModel: ObservableObject {
     /// loaded — choosing the same one again should cost nothing.
     func reopenModelPicker() {
         client.send(Wire.encode("model_reopen"))
+    }
+
+    /// Abandon a load in progress and go back to the picker. The step already
+    /// running on a worker thread has to finish first, so this is not instant.
+    func cancelModelLoad() {
+        client.send(Wire.encode("model_cancel"))
     }
 
     func newSession()            { client.send(Wire.encode("session_new")) }

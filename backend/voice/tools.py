@@ -460,6 +460,10 @@ class ToolStream:
         self._buf = ""
         self._in_call = False
         self._in_ctx = False
+        # A swallowed block leaves the newline that followed it, which renders
+        # as a blank first line in the bubble — it reads as stray padding above
+        # the reply. Trim once, on the next prose to actually arrive.
+        self._trim_next = False
         self.raw = ""       # everything the model produced, verbatim
 
     def feed(self, chunk: str) -> tuple[str, list[dict]]:
@@ -487,6 +491,7 @@ class ToolStream:
                     break
                 self._buf = self._buf[i + len(_CTX_CLOSE):]
                 self._in_ctx = False
+                self._trim_next = True
             else:
                 i = self._buf.find(_OPEN)
                 j = self._buf.find(_CTX_OPEN)
@@ -513,12 +518,24 @@ class ToolStream:
                     if brace != -1 and "}" not in out[brace:] and len(out) - brace < 200:
                         self._buf = out[brace:] + self._buf
                         out = out[:brace]
-                    prose.append(_strip_stray_json(out))
+                    prose.append(self._emit(out))
                     break
-                prose.append(self._buf[:i])
+                prose.append(self._emit(self._buf[:i], clean=False))
                 self._buf = self._buf[i + len(_OPEN):]
                 self._in_call = True
         return "".join(prose), calls
+
+    def _emit(self, out: str, clean: bool = True) -> str:
+        """Prose on its way to the screen and the speaker."""
+        if self._trim_next:
+            stripped = out.lstrip()
+            # Stay armed through empty emissions: at one character per chunk the
+            # closing tag lands with nothing after it, and disarming there would
+            # let the newline through on the following chunk.
+            if stripped:
+                self._trim_next = False
+            out = stripped
+        return _strip_stray_json(out) if clean else out
 
     def flush(self) -> tuple[str, list[dict]]:
         """End of generation: emit the tail (a truncated call is discarded)."""
@@ -532,7 +549,7 @@ class ToolStream:
             self._buf, self._in_ctx = "", False
             return "", []
         out, self._buf = self._buf, ""
-        return _strip_stray_json(out), []
+        return self._emit(out), []
 
 
 # Some fine-tunes emit an XML-ish call instead of Hermes JSON, whatever their
