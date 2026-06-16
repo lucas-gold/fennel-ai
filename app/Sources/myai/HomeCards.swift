@@ -202,6 +202,8 @@ struct HomeCard: Identifiable {
 
 struct HomeCardView: View {
     let card: HomeCard
+    /// Full-size preview for a generated picture.
+    @State private var expanded = false
     let onDismiss: () -> Void
     var onUndo: () -> Void = {}
 
@@ -324,12 +326,33 @@ struct HomeCardView: View {
     /// socket: it is a couple of megabytes and it is already on this machine.
     @ViewBuilder private var imageBody: some View {
         if let path = card.imagePath, let img = NSImage(contentsOfFile: path) {
-            Image(nsImage: img)
-                .resizable()
-                .aspectRatio(contentMode: .fit)
-                .frame(maxWidth: 320)
-                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                .padding(.top, 6)
+            let url = URL(fileURLWithPath: path)
+            VStack(alignment: .leading, spacing: 5) {
+                Image(nsImage: img)
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .frame(maxWidth: 320)
+                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    .onTapGesture { expanded = true }
+                    // Drag the picture straight into anything that takes a
+                    // file. It is already a real PNG on disk, so this is the
+                    // whole implementation.
+                    .onDrag { NSItemProvider(contentsOf: url) ?? NSItemProvider() }
+                    .help("Click to enlarge · drag to use elsewhere")
+
+                HStack(spacing: 10) {
+                    Button("Enlarge") { expanded = true }
+                    Button("Show in Finder") {
+                        NSWorkspace.shared.activateFileViewerSelecting([url])
+                    }
+                    Text("Saved to Downloads").foregroundStyle(.tertiary)
+                }
+                .font(.system(size: 10))
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+            }
+            .padding(.top, 6)
+            .sheet(isPresented: $expanded) { expandedSheet(img, url) }
         } else if card.status == .working {
             VStack(alignment: .leading, spacing: 4) {
                 ProgressView(value: card.progress)
@@ -340,6 +363,29 @@ struct HomeCardView: View {
             }
             .padding(.top, 6)
         }
+    }
+
+    /// Full-size view. Split out of `imageBody` so the type checker does not
+    /// have to infer one very large expression.
+    private func expandedSheet(_ img: NSImage, _ url: URL) -> some View {
+        VStack(spacing: 10) {
+            Image(nsImage: img)
+                .resizable()
+                .aspectRatio(contentMode: .fit)
+                .frame(maxWidth: 820, maxHeight: 820)
+                .onDrag { NSItemProvider(contentsOf: url) ?? NSItemProvider() }
+            HStack(spacing: 12) {
+                Text(card.title).font(.system(size: 12, weight: .medium))
+                Spacer()
+                Button("Show in Finder") {
+                    NSWorkspace.shared.activateFileViewerSelecting([url])
+                }
+                Button("Done") { expanded = false }
+                    .keyboardShortcut(.defaultAction)
+            }
+            .font(.system(size: 12))
+        }
+        .padding(16)
     }
 
     /// Handing off to Music/Spotify is the one thing in the app that leaves the

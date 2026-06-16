@@ -52,9 +52,10 @@ final class ChatModel: ObservableObject {
     /// "Look things up" — Wikipedia, always free. The web tool additionally
     /// needs a key, which lives in the Keychain and never in the backend's DB.
     @Published var lookups = false
-    /// Whether Fennel may draw pictures. Off by default: it is a 4.6 GB
-    /// download and a minute of the machine's full attention per image.
-    @Published var images = false
+    /// The image model, as shown on its own row at the top of the picker.
+    /// Not in the network panel: it is a model, and it belongs with the models.
+    @Published var imageModel: ModelOption?
+    @Published var imagesEnabled = false
     @Published var webKey = ""
     @Published var hasWebKey = false
     @Published var webPaused = false
@@ -236,6 +237,10 @@ final class ChatModel: ObservableObject {
             if let u = msg["system_used_bytes"] as? Int { systemUsedBytes = u }
             if let t = msg["system_total_bytes"] as? Int { systemTotalBytes = t }
             setupNote = msg["note"] as? String ?? ""
+            if let row = msg["image_model"] as? [String: Any] {
+                imageModel = ModelOption(json: row)
+                imagesEnabled = row["enabled"] as? Bool ?? imagesEnabled
+            }
         case "busy":
             busy = msg["busy"] as? Bool ?? false
             busyDetail = msg["detail"] as? String ?? ""
@@ -252,7 +257,7 @@ final class ChatModel: ObservableObject {
             dailyUpdates = msg["daily_updates"] as? Bool ?? false
             location = msg["location"] as? String ?? ""
             lookups = msg["lookups"] as? Bool ?? false
-            images = msg["images"] as? Bool ?? images
+
             modelName = msg["model_name"] as? String ?? modelName
             modelID = msg["model_id"] as? String ?? modelID
             hasWebKey = msg["has_web_key"] as? Bool ?? false
@@ -317,6 +322,13 @@ final class ChatModel: ObservableObject {
     /// Abandon a load in progress and go back to the picker. The step already
     /// running on a worker thread has to finish first, so this is not instant.
     /// Free the resident model without choosing another.
+    /// Turn picture generation on or off. The backend answers with a fresh
+    /// picker, so the row always reflects what was actually stored.
+    func setImagesEnabled(_ on: Bool) {
+        imagesEnabled = on
+        client.send(Wire.encode("image_toggle", ["enabled": on]))
+    }
+
     func unloadModel() {
         client.send(Wire.encode("model_unload"))
     }
@@ -360,7 +372,7 @@ final class ChatModel: ObservableObject {
         client.send(Wire.encode("settings", ["daily_updates": dailyUpdates,
                                              "location": location,
                                              "lookups": lookups,
-                                             "images": images,
+
                                              "web_key": webKey]))
     }
 

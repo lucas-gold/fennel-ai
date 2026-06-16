@@ -54,8 +54,11 @@ LEAD_INS = {
 # depend on a 4B choosing to call a tool this time. If the user plainly asked
 # and no image was raised, the request is honoured from their own words.
 _DRAWY = re.compile(
-    r"\b(draw|sketch|paint|generate|create|make|render|show)\b[^.?!]{0,24}?"
-    r"\b(image|picture|photo|photograph|drawing|painting|artwork|illustration)\b"
+    r"\b(draw|sketch|paint|generate|create|make|render|show|design)\b[^.?!]{0,24}?"
+    # Not just "picture": a logo, an icon, a poster are all this feature, and
+    # asking for one used to fall through to an empty reply.
+    r"\b(image|picture|photo|photograph|drawing|painting|artwork|illustration|"
+    r"logo|icon|poster|wallpaper|portrait|banner|sketch|render|mockup|design)s?\b"
     r"|\bimagine\s+(a|an|the)\b"
     # The bare imperative — "draw a red barn". Requires an article after the
     # verb, which is what separates it from "draw your own conclusions".
@@ -692,6 +695,13 @@ class Session:
                     await self._send_control(
                         P.encode("token", turn=turn, text=line))
                 await self._draw_described(self._image_desc)
+            # Whatever happened above, an empty bubble is not an answer. This
+            # caught a request for a logo that produced only a stripped tag and
+            # no fallback: three dots, then nothing at all.
+            if self._live(epoch) and not visible.strip() and not fired:
+                line = "Sorry — nothing came back that time. Try asking again?"
+                visible += line
+                await self._send_control(P.encode("token", turn=turn, text=line))
         finally:
             self._assistant_active = False
             if self._live(epoch):
@@ -773,7 +783,8 @@ class Session:
                 lambda: asyncio.create_task(update(status="working",
                                                    detail=detail, progress=frac)))
 
-        out = os.path.join(images.images_dir(), f"{card_id}.png")
+        out = os.path.join(images.images_dir(),
+                           images.filename_for(card.get("title", ""), card_id))
         released = False
         try:
             if unload and self._on_need_memory is not None:

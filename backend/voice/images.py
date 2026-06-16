@@ -36,9 +36,24 @@ Progress = Callable[[str, float], None]        # (detail, 0..1)
 
 
 def images_dir() -> str:
+    """Where finished pictures go: the Downloads folder.
+
+    Not Application Support. A picture is something you want to use — attach,
+    post, drag into something else — and a path nobody can find is the same as
+    no picture. Falls back to the app's own folder if Downloads is missing.
+    """
+    downloads = os.path.expanduser("~/Downloads")
+    if os.path.isdir(downloads):
+        return downloads
     path = os.path.join(APP_DIR, "images")
     os.makedirs(path, exist_ok=True)
     return path
+
+
+def filename_for(title: str, card_id: str) -> str:
+    """A name that says what it is, without colliding with anything."""
+    slug = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")[:48] or "picture"
+    return f"fennel-{slug}-{card_id}.png"
 
 
 def installed() -> bool:
