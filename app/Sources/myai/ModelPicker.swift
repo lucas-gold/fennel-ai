@@ -21,13 +21,26 @@ struct ModelPicker: View {
     /// to undo, so it asks first — and asks in place, because a sheet over a
     /// list this small hides the thing being talked about.
     @State private var confirmingDelete: String?
+    /// Option-click the heading to show models marked hidden. Session-only on
+    /// purpose: it resets every time the picker opens, so the default view
+    /// stays the default view.
+    @State private var revealHidden = false
 
     var body: some View {
         VStack(spacing: 14) {
-            VStack(spacing: 5) {
-                Text("Choose a model").font(Theme.title(17, .semibold))
-                Text("Only one runs at a time. You can change it next launch.")
-                    .font(.system(size: 11.5)).foregroundStyle(.secondary)
+            VStack(spacing: 4) {
+                Text("Choose a Fennel model")
+                    .font(Theme.title(17, .semibold))
+                    .gesture(TapGesture().modifiers(.option).onEnded {
+                        revealHidden.toggle()
+                    })
+                Text(ramLine)
+                    .font(.system(size: 11.5).monospacedDigit())
+                    .foregroundStyle(.secondary)
+                if chat.overheadBytes > 0 {
+                    Text("Fennel uses \(ModelOption.gb(chat.overheadBytes)) of RAM in addition to the model")
+                        .font(.system(size: 10.5)).foregroundStyle(.tertiary)
+                }
             }
 
             if !chat.setupNote.isEmpty {
@@ -37,7 +50,7 @@ struct ModelPicker: View {
 
             ScrollView {
                 VStack(spacing: 8) {
-                    ForEach(chat.setupModels) { m in
+                    ForEach(visibleModels) { m in
                         row(m)
                     }
                 }
@@ -48,11 +61,36 @@ struct ModelPicker: View {
 
             confirmBar
 
-            Text("Downloaded models live in ~/.cache/huggingface and can be removed here at any time.")
+            Text(hiddenCount > 0
+                 ? "Downloaded models live in ~/.cache/huggingface. \(hiddenCount) model\(hiddenCount == 1 ? " is" : "s are") hidden — ⌥-click the title to show."
+                 : "Downloaded models live in ~/.cache/huggingface and can be removed here at any time.")
                 .font(.system(size: 10)).foregroundStyle(.tertiary)
                 .multilineTextAlignment(.center)
         }
         .padding(.horizontal, 22)
+    }
+
+    /// Hidden rows stay out of the way until Option-clicked — except when one
+    /// is already loaded or was the last choice, since a picker that omits the
+    /// model you are running would be lying.
+    private var visibleModels: [ModelOption] {
+        chat.setupModels.filter {
+            revealHidden || !$0.hidden
+                || $0.id == chat.loadedModelID || $0.id == chat.setupCurrent
+        }
+    }
+
+    /// Measured, not advertised: the free figure is what decides whether the
+    /// next model down the list will actually fit.
+    private var ramLine: String {
+        guard chat.systemTotalBytes > 0 else { return "Reading memory…" }
+        let free = max(0, chat.systemTotalBytes - chat.systemUsedBytes)
+        return "Total RAM: \(ModelOption.gb(chat.systemTotalBytes))    "
+             + "Available RAM: \(ModelOption.gb(free))"
+    }
+
+    private var hiddenCount: Int {
+        chat.setupModels.count - visibleModels.count
     }
 
     private func row(_ m: ModelOption) -> some View {
@@ -127,12 +165,28 @@ struct ModelPicker: View {
         HStack(spacing: 7) {
             Text(m.name).font(.system(size: 13.5, weight: .semibold))
             Text(m.detail).font(.system(size: 11)).foregroundStyle(.secondary)
-            if m.id == chat.setupCurrent {
+            // "In use" means the weights are still resident — reopening the
+            // picker does not unload them, so returning to the same model is
+            // free. The x makes that untrue when the RAM is wanted back.
+            if m.id == chat.loadedModelID {
+                HStack(spacing: 3) {
+                    Text("IN USE").font(.system(size: 8.5, weight: .bold))
+                    Button { chat.unloadModel() } label: {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 7, weight: .bold))
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .help("Unload from memory")
+                }
+                .padding(.horizontal, 5).padding(.vertical, 2)
+                .background(Capsule().fill(Theme.accentSolid.opacity(0.3)))
+            } else if m.id == chat.setupCurrent {
                 Text("LAST USED")
                     .font(.system(size: 8.5, weight: .bold))
                     .padding(.horizontal, 5)
                     .padding(.vertical, 2)
-                    .background(Capsule().fill(Theme.accentSolid.opacity(0.25)))
+                    .background(Capsule().fill(Color.secondary.opacity(0.22)))
             }
         }
     }

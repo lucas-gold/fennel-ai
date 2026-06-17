@@ -119,6 +119,15 @@ _chosen_model: str = ""
 # cannot be interrupted mid-step, so this is checked between steps: the
 # current step finishes, then the model is unloaded and the picker returns.
 _cancel_load = asyncio.Event()
+# Measured once a model is up: how much of MLX's allocation is the LLM,
+# and therefore how much of the process is everything else — Whisper,
+# Kokoro, the embedder and the Python runtime. Shown on the picker so the
+# RAM arithmetic there is the machine's, not a guess.
+_llm_bytes = 0
+_overhead_bytes = 0
+# Process size before a single model is loaded: the Python runtime and
+# the app's own footprint, which no model is responsible for.
+_base_rss = 0
 
 
 class _Cancelled(Exception):
@@ -183,6 +192,10 @@ async def handler(ws) -> None:
                     global _chosen_model
                     _chosen_model = str(m.get("id", ""))
                     _model_chosen.set()
+                elif kind == "model_unload":
+                    await _drop_llm()
+                    _set_setup(phase="choose_model", **_picker_fields(),
+                               current=config.LLM_MODEL, note="")
                 elif kind == "model_cancel":
                     print("[setup] cancel requested", flush=True)
                     _cancel_load.set()
@@ -196,8 +209,7 @@ async def handler(ws) -> None:
                         note = ""
                     except Exception as exc:
                         note = str(exc)
-                    _set_setup(phase="choose_model",
-                               models=model_setup.catalogue(),
+                    _set_setup(phase="choose_model", **_picker_fields(),
                                current=_store.setting("llm_model", "")
                                        or config.DEFAULT_MODEL,
                                note=note)
@@ -293,9 +305,15 @@ async def handler(ws) -> None:
                         note = ""
                     except Exception as exc:
                         note = str(exc)
-                    _set_setup(phase="choose_model",
-                               models=model_setup.catalogue(),
+                    _set_setup(phase="choose_model", **_picker_fields(),
                                current=config.LLM_MODEL, note=note)
+                elif msg["type"] == "model_unload":
+                    # Free the resident model without choosing another. The
+                    # picker offers this so "in use" can be made untrue: on a
+                    # 24 GB machine you may want the RAM back before deciding.
+                    await _drop_llm()
+                    _set_setup(phase="choose_model", **_picker_fields(),
+                               current=config.LLM_MODEL, note="")
                 elif msg["type"] == "model_reopen":
                     # Back to the picker without leaving the app. Nothing is
                     # unloaded yet: choosing the same model again should cost
@@ -326,6 +344,8 @@ async def main() -> None:
     async with websockets.serve(handler, config.HOST, config.PORT, max_size=None):
         print(f"Fennel backend listening on ws://{config.HOST}:{config.PORT}  "
               f"(tier={config.TIER})", flush=True)
+        global _base_rss
+        _base_rss = sysmem.snapshot(0)["process_bytes"]
         asyncio.create_task(_watch_parent())
         asyncio.create_task(_broadcast_memory())
         try:
@@ -396,12 +416,12 @@ async def _switch_model() -> None:
     _cancel_load.clear()
     _chosen_model = ""
     _ready.clear()
-    _set_setup(phase="choose_model", models=model_setup.catalogue(),
+    _set_setup(phase="choose_model", **_picker_fields(),
                current=was, note="")
     await _model_chosen.wait()
     pick = _chosen_model or was
 
-    if pick == was:
+    if pick == was and _llm is not None:
         print("[setup] same model kept; nothing reloaded", flush=True)
         _set_setup(phase="ready")
         return
@@ -451,7 +471,7 @@ async def _choose_and_load() -> None:
             # still unloading, which is exactly when it gets pressed — the
             # button had no effect at all.
             _cancel_load.clear()
-            _set_setup(phase="choose_model", models=model_setup.catalogue(),
+            _set_setup(phase="choose_model", **_picker_fields(),
                        current=stored, note="")
             await _model_chosen.wait()
             config.LLM_MODEL = _chosen_model or stored
@@ -467,6 +487,22 @@ async def _choose_and_load() -> None:
             force_picker = True
             continue
         break
+
+
+def _picker_fields() -> dict:
+    """Everything the picker needs that is not a model row."""
+    # Uncached: this is sent right after an unload, and the whole point of that
+    # frame is to show the memory coming back.
+    snap = sysmem.snapshot(0)
+    overhead = _overhead_bytes or int(_store.setting("overhead_bytes", "0") or 0)
+    return {
+        "models": model_setup.catalogue(),
+        # Which model is actually resident, as opposed to merely last chosen.
+        "loaded": config.LLM_MODEL if _llm is not None else "",
+        "overhead_bytes": overhead,
+        "system_used_bytes": snap["system_used_bytes"],
+        "system_total_bytes": snap["system_total_bytes"],
+    }
 
 
 async def _drop_llm() -> None:
@@ -545,7 +581,10 @@ async def _load_everything(chosen: dict) -> None:
           f"({config.LLM_MODEL.split('/')[-1]}, "
           f"{config.STT_MODEL.split('/')[-1]}, "
           f"{config.TTS_MODEL.split('/')[-1]}) …", flush=True)
+    global _llm_bytes, _overhead_bytes
+    _before = sysmem.mlx_bytes()
     _llm = await asyncio.to_thread(LLM, config.LLM_MODEL)
+    _llm_bytes = max(0, sysmem.mlx_bytes() - _before)
     # Cancel cannot interrupt a load already running on a worker thread, so the
     # step finishes and is thrown away here instead.
     _check_cancel()
@@ -591,6 +630,13 @@ async def _load_everything(chosen: dict) -> None:
     await asyncio.to_thread(_llm.prime, _system)
 
     _store.set_setting(eta_key, f"{time.monotonic() - started:.0f}")
+    # Everything Fennel holds that is not the language model: the other three
+    # models (MLX's total, less the LLM's share) plus the runtime baseline.
+    # Both terms have to come from the same accounting — MLX allocates in
+    # unified memory that is not all resident, so it routinely reports more
+    # than the process RSS and subtracting one from the other gave nonsense.
+    _overhead_bytes = _base_rss + max(0, sysmem.mlx_bytes() - _llm_bytes)
+    _store.set_setting("overhead_bytes", str(_overhead_bytes))
     _set_setup(phase="ready")
     print("Fennel ready.", flush=True)
 
