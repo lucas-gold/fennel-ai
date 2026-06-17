@@ -15,6 +15,7 @@ struct ModelOption: Identifiable, Equatable {
     let installed: Bool
     let onDisk: Int           // bytes it currently occupies, 0 if absent
     let hidden: Bool          // kept off the list until asked for
+    let peakBytes: Int        // image model: memory while it draws
 
     init?(json: [String: Any]) {
         guard let id = json["id"] as? String, let name = json["name"] as? String
@@ -28,6 +29,7 @@ struct ModelOption: Identifiable, Equatable {
         installed = json["installed"] as? Bool ?? false
         onDisk = json["on_disk"] as? Int ?? 0
         hidden = json["hidden"] as? Bool ?? false
+        peakBytes = json["peak_bytes"] as? Int ?? 0
     }
 
     /// "4.3 GB" — decimal GB, to match how the download size is advertised.

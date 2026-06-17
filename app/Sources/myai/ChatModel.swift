@@ -329,6 +329,9 @@ final class ChatModel: ObservableObject {
         client.send(Wire.encode("image_toggle", ["enabled": on]))
     }
 
+    /// Remove the downloaded image weights.
+    func deleteImageModel() { client.send(Wire.encode("image_delete")) }
+
     func unloadModel() {
         client.send(Wire.encode("model_unload"))
     }

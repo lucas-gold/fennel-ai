@@ -204,6 +204,9 @@ struct HomeCardView: View {
     let card: HomeCard
     /// Full-size preview for a generated picture.
     @State private var expanded = false
+    /// Whether this picture has been copied to Downloads. Pictures are kept in
+    /// the app's own folder until asked for — most are a look, not a keeper.
+    @State private var saved = false
     let onDismiss: () -> Void
     var onUndo: () -> Void = {}
 
@@ -340,14 +343,19 @@ struct HomeCardView: View {
                     .onDrag { NSItemProvider(contentsOf: url) ?? NSItemProvider() }
                     .help("Click to enlarge · drag to use elsewhere")
 
-                HStack(spacing: 10) {
-                    Button("Enlarge") { expanded = true }
-                    Button("Show in Finder") {
-                        NSWorkspace.shared.activateFileViewerSelecting([url])
+                HStack(spacing: 12) {
+                    Button { expanded = true } label: {
+                        Image(systemName: "arrow.up.left.and.arrow.down.right")
                     }
-                    Text("Saved to Downloads").foregroundStyle(.tertiary)
+                    .help("Enlarge")
+                    Button { save(url) } label: {
+                        Image(systemName: saved ? "checkmark" : "arrow.down.circle")
+                    }
+                    .help(saved ? "Saved to Downloads" : "Save to Downloads")
+                    .foregroundStyle(saved ? Color.green : Color.secondary)
+                    Spacer(minLength: 0)
                 }
-                .font(.system(size: 10))
+                .font(.system(size: 12))
                 .buttonStyle(.plain)
                 .foregroundStyle(.secondary)
             }
@@ -377,15 +385,34 @@ struct HomeCardView: View {
             HStack(spacing: 12) {
                 Text(card.title).font(.system(size: 12, weight: .medium))
                 Spacer()
-                Button("Show in Finder") {
-                    NSWorkspace.shared.activateFileViewerSelecting([url])
-                }
+                Button(saved ? "Saved" : "Save to Downloads") { save(url) }
+                    .disabled(saved)
                 Button("Done") { expanded = false }
                     .keyboardShortcut(.defaultAction)
             }
             .font(.system(size: 12))
         }
         .padding(16)
+    }
+
+    /// Copy the picture into Downloads, uniquing the name rather than
+    /// overwriting anything already there.
+    private func save(_ url: URL) {
+        guard let dir = FileManager.default.urls(
+            for: .downloadsDirectory, in: .userDomainMask).first else { return }
+        var dest = dir.appendingPathComponent(url.lastPathComponent)
+        var n = 2
+        while FileManager.default.fileExists(atPath: dest.path) {
+            let stem = url.deletingPathExtension().lastPathComponent
+            dest = dir.appendingPathComponent("\(stem)-\(n).png")
+            n += 1
+        }
+        do {
+            try FileManager.default.copyItem(at: url, to: dest)
+            withAnimation(.easeOut(duration: 0.2)) { saved = true }
+        } catch {
+            print("[image] couldn't save:", error)
+        }
     }
 
     /// Handing off to Music/Spotify is the one thing in the app that leaves the
