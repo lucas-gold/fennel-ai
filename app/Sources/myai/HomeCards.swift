@@ -241,9 +241,14 @@ struct HomeCardView: View {
                 .padding(.top, 1)
 
             VStack(alignment: .leading, spacing: 3) {
-                Text(card.title)
-                    .font(.system(size: 13, weight: .semibold))
-                    .fixedSize(horizontal: false, vertical: true)
+                // A picture card has no title: its description is the whole of
+                // what it is, and a truncated version of it above the full text
+                // said nothing twice.
+                if !card.title.isEmpty {
+                    Text(card.title)
+                        .font(.system(size: 13, weight: .semibold))
+                        .fixedSize(horizontal: false, vertical: true)
+                }
                 if let subtitle = card.subtitle {
                     Text(subtitle).font(.system(size: 11.5)).foregroundStyle(.secondary)
                 }
@@ -383,7 +388,8 @@ struct HomeCardView: View {
                 .frame(maxWidth: 820, maxHeight: 820)
                 .onDrag { NSItemProvider(contentsOf: url) ?? NSItemProvider() }
             HStack(spacing: 12) {
-                Text(card.title).font(.system(size: 12, weight: .medium))
+                Text(card.body ?? "").font(.system(size: 11)).lineLimit(2)
+                    .foregroundStyle(.secondary)
                 Spacer()
                 Button(saved ? "Saved" : "Save to Downloads") { save(url) }
                     .disabled(saved)

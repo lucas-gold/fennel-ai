@@ -53,6 +53,10 @@ LEAD_INS = {
 # "Draw me a X" is unmistakable, and whether it becomes a picture should not
 # depend on a 4B choosing to call a tool this time. If the user plainly asked
 # and no image was raised, the request is honoured from their own words.
+#: One picture at a time. A second request while one is drawing waits rather
+#: than doubling the memory and halving the speed of both.
+_IMAGE_LOCK = asyncio.Lock()
+
 _DRAWY = re.compile(
     r"\b(draw|sketch|paint|generate|create|make|render|show|design)\b[^.?!]{0,24}?"
     # Not just "picture": a logo, an icon, a poster are all this feature, and
@@ -768,6 +772,15 @@ class Session:
         async def update(**fields) -> None:
             await self._send_control(P.encode("card_update", id=card_id, **fields))
 
+        if _IMAGE_LOCK.locked():
+            await update(status="working",
+                         detail="Waiting for the picture ahead of this one…")
+        async with _IMAGE_LOCK:
+            await self._draw_one(card_id, card, update)
+
+    async def _draw_one(self, card_id: str, card: dict, update) -> None:
+        from voice import images, sysmem
+
         snap = sysmem.snapshot(0)
         free = max(0, snap["system_total_bytes"] - snap["system_used_bytes"])
         pixels, low_ram, unload = images.plan(free)
@@ -784,7 +797,7 @@ class Session:
                                                    detail=detail, progress=frac)))
 
         out = os.path.join(images.images_dir(),
-                           images.filename_for(card.get("title", ""), card_id))
+                           images.filename_for(card.get("subject", ""), card_id))
         released = False
         try:
             if unload and self._on_need_memory is not None:
@@ -796,9 +809,11 @@ class Session:
                 released = True
             await asyncio.to_thread(
                 images.generate, card["prompt"], out,
-                pixels=pixels, low_ram=low_ram, progress=report)
+                pixels=pixels, low_ram=low_ram, progress=report, token=card_id)
             await update(status="done", path=out)
             print(f"[image] delivered {out}", flush=True)
+        except images.Cancelled:
+            print(f"[image] {card_id} cancelled by the user", flush=True)
         except Exception as exc:
             print(f"[image] failed: {exc}", flush=True)
             await update(status="failed", detail=str(exc)[:160])

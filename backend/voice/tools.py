@@ -774,8 +774,11 @@ def normalize(name: str, args: dict) -> tuple[dict, dict]:
         subject = _REQUEST.sub("", prompt).strip() or prompt
         if not prompt:
             return {}, {"ok": False, "error": "no description given; ask what to draw"}
-        title = str(args.get("subject", "")).strip() or _short_title(subject)
-        card = {"title": title[:60], "prompt": prompt[:600]}
+        # No title. A generated picture is its description — a five-word name
+        # above the same words in full was one line of nothing.
+        card = {"title": "", "prompt": prompt[:600],
+                "subject": (str(args.get("subject", "")).strip()
+                            or _short_title(subject))[:80]}
         # The result the model sees is deliberately not "done": the picture is
         # still a minute away, and a model told the tool succeeded will happily
         # announce a picture nobody can see yet.

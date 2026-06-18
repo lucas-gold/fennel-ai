@@ -387,6 +387,11 @@ final class ChatModel: ObservableObject {
     /// the card *is* the reminder. Because that's destructive on a one-click
     /// gesture, it leaves an Undo behind instead of vanishing.
     func dismiss(_ card: HomeCard) {
+        // Stop the render too. Hiding the card while a minute of computation
+        // carried on for a picture nobody will see is not a dismissal.
+        if card.kind == .image, card.status == .working {
+            client.send(Wire.encode("card_cancel", ["id": card.id]))
+        }
         guard card.kind.writesToEventKit, let ext = card.externalID else {
             cards.removeAll { $0.id == card.id }
             return
