@@ -495,7 +495,9 @@ def _picker_fields() -> dict:
     # Uncached: this is sent right after an unload, and the whole point of that
     # frame is to show the memory coming back.
     snap = sysmem.snapshot(0)
-    overhead = _overhead_bytes or int(_store.setting("overhead_bytes", "0") or 0)
+    overhead = (_overhead_bytes
+                or int(_store.setting("overhead_bytes", "0") or 0)
+                or config.OVERHEAD_ESTIMATE_BYTES)
     return {
         "models": model_setup.catalogue(),
         # Which model is actually resident, as opposed to merely last chosen.

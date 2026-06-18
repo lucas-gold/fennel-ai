@@ -91,6 +91,11 @@ MODELS: list[dict] = [
      "bytes": 6_910_000_000, "tools": False, "hidden": True},
 ]
 
+# What Fennel costs besides the language model — Whisper, Kokoro, the embedder
+# and the Python runtime. Measured at the end of every successful load and
+# remembered; this is only the figure used before there has ever been one.
+OVERHEAD_ESTIMATE_BYTES = 1_700_000_000
+
 DEFAULT_MODEL = "mlx-community/Qwen3-4B-Instruct-2507-4bit"
 
 # The model actually in use. Rebound once at startup from the user's stored
