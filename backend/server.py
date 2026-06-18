@@ -373,7 +373,8 @@ async def _broadcast_memory() -> None:
         await asyncio.sleep(2)
         if not _clients:
             continue
-        snap = sysmem.snapshot()
+        snap = dict(sysmem.snapshot(), llm_bytes=_llm_bytes,
+                    overhead_bytes=_overhead_bytes)
         await _broadcast(P.encode("memory", **snap))
 
 
@@ -500,6 +501,7 @@ def _picker_fields() -> dict:
         # Which model is actually resident, as opposed to merely last chosen.
         "loaded": config.LLM_MODEL if _llm is not None else "",
         "overhead_bytes": overhead,
+        "llm_bytes": _llm_bytes,
         "system_used_bytes": snap["system_used_bytes"],
         "system_total_bytes": snap["system_total_bytes"],
     }
@@ -555,7 +557,7 @@ async def _load_everything(chosen: dict) -> None:
     # wrong for both. First run of a given model has no history and gets a
     # rough guess scaled by its size.
     eta_key = f"startup_seconds:{config.LLM_MODEL}"
-    eta = float(_store.setting(eta_key, "") or max(20.0, chosen["ram"] * 6))
+    eta = float(_store.setting(eta_key, "") or max(20.0, chosen["bytes"] / 1e9 * 8))
     started = time.monotonic()
     # Weights go into unified memory one model at a time; naming each with its
     # size is more informative than a spinner, and explains where the wait goes.
@@ -582,9 +584,9 @@ async def _load_everything(chosen: dict) -> None:
           f"{config.STT_MODEL.split('/')[-1]}, "
           f"{config.TTS_MODEL.split('/')[-1]}) …", flush=True)
     global _llm_bytes, _overhead_bytes
-    _before = sysmem.mlx_bytes()
+    _before = sysmem.mlx_active()
     _llm = await asyncio.to_thread(LLM, config.LLM_MODEL)
-    _llm_bytes = max(0, sysmem.mlx_bytes() - _before)
+    _llm_bytes = max(0, sysmem.mlx_active() - _before)
     # Cancel cannot interrupt a load already running on a worker thread, so the
     # step finishes and is thrown away here instead.
     _check_cancel()
@@ -635,7 +637,7 @@ async def _load_everything(chosen: dict) -> None:
     # Both terms have to come from the same accounting — MLX allocates in
     # unified memory that is not all resident, so it routinely reports more
     # than the process RSS and subtracting one from the other gave nonsense.
-    _overhead_bytes = _base_rss + max(0, sysmem.mlx_bytes() - _llm_bytes)
+    _overhead_bytes = _base_rss + max(0, sysmem.mlx_active() - _llm_bytes)
     _store.set_setting("overhead_bytes", str(_overhead_bytes))
     _set_setup(phase="ready")
     print("Fennel ready.", flush=True)

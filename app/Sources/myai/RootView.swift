@@ -106,11 +106,6 @@ private struct FirstRunOverlay: View {
                                               : chat.setupDetail)
                     .font(.system(size: 11)).foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
-                if !chat.setupLoaded.isEmpty {
-                    Text(chat.setupLoaded)
-                        .font(.system(size: 10).monospacedDigit())
-                        .foregroundStyle(.tertiary)
-                }
                 if chat.setupEta > 1 { Countdown(seconds: chat.setupEta) }
 
                 // Measured, not estimated. The step labels are a plan; this is

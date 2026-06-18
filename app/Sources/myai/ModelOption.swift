@@ -11,7 +11,6 @@ struct ModelOption: Identifiable, Equatable {
     let detail: String        // "Qwen3 · 4B"
     let focus: String         // a sentence on what it is for
     let bytes: Int            // download size
-    let ram: Double           // approximate GB resident once loaded
     let tools: Bool           // whether its template renders Fennel's tools
     let installed: Bool
     let onDisk: Int           // bytes it currently occupies, 0 if absent
@@ -25,7 +24,6 @@ struct ModelOption: Identifiable, Equatable {
         detail = json["detail"] as? String ?? ""
         focus = json["focus"] as? String ?? ""
         bytes = json["bytes"] as? Int ?? 0
-        ram = json["ram"] as? Double ?? 0
         tools = json["tools"] as? Bool ?? true
         installed = json["installed"] as? Bool ?? false
         onDisk = json["on_disk"] as? Int ?? 0
