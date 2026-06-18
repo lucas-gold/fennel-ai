@@ -84,6 +84,19 @@ def _children_rss() -> int:
     return total
 
 
+def _child_cost(used_now: int) -> int:
+    """What the drawing subprocess is actually costing.
+
+    Its RSS is a floor, not the answer: take the machine's own rise since it
+    started when that is larger, which is the number the user can see in
+    Activity Monitor and the one that decides whether anything else fits.
+    """
+    rss = _children_rss()
+    if _child_baseline is None:
+        return rss
+    return max(rss, used_now - _child_baseline)
+
+
 def _app_rss() -> int:
     """The SwiftUI app, which is a separate process from this one.
 
@@ -126,6 +139,23 @@ def mlx_bytes() -> int:
         return 0
 
 
+#: System memory in use when a subprocess was launched, so its true cost can be
+#: read from the machine rather than from its RSS — MLX allocates in unified
+#: memory that a process's resident size does not fully account for, which is
+#: why a job using five gigabytes reported two.
+_child_baseline: Optional[int] = None
+
+
+def mark_child_start() -> None:
+    global _child_baseline
+    _child_baseline = _system_used()[0]
+
+
+def mark_child_end() -> None:
+    global _child_baseline
+    _child_baseline = None
+
+
 def snapshot(min_interval: float = 1.5) -> dict:
     """Current memory picture, cached briefly so a chatty caller cannot turn
     this into a fork bomb.
@@ -148,7 +178,7 @@ def snapshot(min_interval: float = 1.5) -> dict:
         "mlx_active_bytes": active,
         "process_bytes": _rss(),
         "app_bytes": _app_rss(),
-        "child_bytes": _children_rss(),
+        "child_bytes": _child_cost(used),
         "system_used_bytes": used,
         "system_total_bytes": total,
     }
