@@ -192,7 +192,7 @@ struct ModelPicker: View {
             // Everything, not just the weights: the number people want is
             // "what will Fennel be holding if I pick this", and splitting the
             // model from its fixed companions only made that a sum to do.
-            Label("~\(ModelOption.gb(m.bytes + chat.overheadBytes)) in memory",
+            Label("~\(ModelOption.gb(m.bytes + chat.overheadBytes + chat.appBytes)) in memory",
                   systemImage: "memorychip")
                 .foregroundStyle(Color.secondary)
             // Stated plainly rather than hidden: on a model whose template
