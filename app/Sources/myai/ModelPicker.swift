@@ -106,7 +106,7 @@ struct ModelPicker: View {
                     .lineLimit(1)
                 Text(imageState(m))
                     .font(.system(size: 9.5))
-                    .foregroundStyle(m.installed ? Color.secondary : Color.orange)
+                    .foregroundStyle(.secondary)
             }
             Spacer(minLength: 6)
             if m.installed {
@@ -137,12 +137,16 @@ struct ModelPicker: View {
                                   : Color.primary.opacity(0.07), lineWidth: 1)))
     }
 
+    /// The same sentence whether or not it is downloaded — what it costs does
+    /// not change with that, and the download is stated once, on the button.
+    /// A range because it is one: full size wants a lot more than the smaller
+    /// picture it falls back to when memory is short.
     private func imageState(_ m: ModelOption) -> String {
-        let peak = m.peakBytes > 0
-            ? "  ·  ~\(ModelOption.gb(m.peakBytes)) in memory during image generation only"
-            : ""
-        if m.installed { return "Installed · \(ModelOption.gb(m.bytes))" + peak }
-        return "Downloads \(ModelOption.gb(m.bytes)) when you continue" + peak
+        let size = ModelOption.gb(m.bytes)
+        guard m.peakBytes > 0 else { return size }
+        let lo = String(format: "%.0f", Double(m.peakLowBytes) / 1_000_000_000)
+        let hi = String(format: "%.0f", Double(m.peakBytes) / 1_000_000_000)
+        return "\(size)  ·  \(lo)–\(hi) GB in memory during image generation only"
     }
 
     private func row(_ m: ModelOption) -> some View {
@@ -156,21 +160,37 @@ struct ModelPicker: View {
         chat.setupModels.first { $0.id == (pending ?? chat.setupCurrent) }
     }
 
+    /// Everything that still has to come down the wire before this can run:
+    /// the language model, and the picture model if it is switched on. Stated
+    /// as one figure on the button rather than as a warning on each row.
+    private var pendingDownload: Int {
+        var total = 0
+        if let m = chosen, !m.installed { total += m.bytes }
+        if chat.imagesEnabled, let img = chat.imageModel, !img.installed {
+            total += img.bytes
+        }
+        return total
+    }
+
+    private func confirmLabel(_ m: ModelOption) -> String {
+        pendingDownload > 0
+            ? "Download \(ModelOption.gb(pendingDownload)) and open \(m.name)"
+            : "Open \(m.name)"
+    }
+
     @ViewBuilder private var confirmBar: some View {
         if let m = chosen {
             VStack(spacing: 6) {
                 Button {
                     chat.chooseModel(m.id)
                 } label: {
-                    Text(m.installed ? "Open \(m.name)"
-                                     : "Download \(ModelOption.gb(m.bytes)) and open \(m.name)")
-                        .frame(maxWidth: .infinity)
+                    Text(confirmLabel(m)).frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.large)
                 .keyboardShortcut(.defaultAction)
 
-                if !m.installed {
+                if pendingDownload > 0 {
                     Text("Downloads once, then it works offline.")
                         .font(.system(size: 10)).foregroundStyle(.tertiary)
                 }
