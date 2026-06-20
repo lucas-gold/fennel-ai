@@ -232,7 +232,12 @@ async def handler(ws) -> None:
                                current=config.LLM_MODEL, note="")
                 elif kind == "model_cancel":
                     print("[setup] cancel requested", flush=True)
+                    # Say so at once. The step in flight cannot be interrupted,
+                    # so without this the button sat dead for however long the
+                    # current load had left to run.
                     _cancel_load.set()
+                    _set_setup(phase="loading", detail="Cancelling…",
+                               loaded="", eta=0.0)
                 elif kind == "image_delete":
                     try:
                         freed = await asyncio.to_thread(image_gen.delete)
@@ -327,7 +332,12 @@ async def handler(ws) -> None:
                     _model_chosen.set()
                 elif msg["type"] == "model_cancel":
                     print("[setup] cancel requested", flush=True)
+                    # Say so at once. The step in flight cannot be interrupted,
+                    # so without this the button sat dead for however long the
+                    # current load had left to run.
                     _cancel_load.set()
+                    _set_setup(phase="loading", detail="Cancelling…",
+                               loaded="", eta=0.0)
                 elif msg["type"] == "image_delete":
                     try:
                         freed = await asyncio.to_thread(image_gen.delete)
@@ -629,6 +639,29 @@ async def _load_everything(chosen: dict) -> None:
     """
     global _stt, _llm, _tts, _memory, _system, _system_day
 
+    # The picture model, if it is switched on and not yet here. Downloaded with
+    # the rest rather than in the middle of the first request for a picture.
+    if (_store.setting("images", "1") or "1") == "1" and not image_gen.installed():
+        _check_cancel()
+        size = model_setup.human(image_gen.MODEL_BYTES)
+        _set_setup(phase="downloading", progress=0.0, size=size,
+                   detail="Downloading image generation model")
+        loop = asyncio.get_running_loop()
+
+        def img_report(done: int, total: int) -> None:
+            loop.call_soon_threadsafe(partial(
+                _set_setup, phase="downloading", size=size,
+                progress=min(1.0, done / total) if total else 0.0,
+                detail=f"Downloading image generation model — "
+                       f"{model_setup.human(done)} of {model_setup.human(total)}"))
+
+        try:
+            await asyncio.to_thread(image_gen.download, img_report)
+        except Exception as exc:
+            # Not fatal: the language model is what Fennel is for. Pictures can
+            # be tried again later, and the tool reports its own failure.
+            print(f"[image] download failed: {exc}", flush=True)
+
     if pending := model_setup.missing():
         size = model_setup.human(model_setup.total_bytes(pending))
         print(f"[setup] {len(pending)} model(s) missing, {size}", flush=True)
@@ -656,29 +689,6 @@ async def _load_everything(chosen: dict) -> None:
                        detail=f"Download failed: {exc}. Check your connection "
                               "and reopen Fennel.")
             return
-
-    # The picture model, if it is switched on and not yet here. Downloaded with
-    # the rest rather than in the middle of the first request for a picture.
-    if (_store.setting("images", "1") or "1") == "1" and not image_gen.installed():
-        _check_cancel()
-        size = model_setup.human(image_gen.MODEL_BYTES)
-        _set_setup(phase="downloading", progress=0.0, size=size,
-                   detail="Downloading the image model — 4.6 GB, once")
-        loop = asyncio.get_running_loop()
-
-        def img_report(done: int, total: int) -> None:
-            loop.call_soon_threadsafe(partial(
-                _set_setup, phase="downloading", size=size,
-                progress=min(1.0, done / total) if total else 0.0,
-                detail=f"Downloading the image model — "
-                       f"{model_setup.human(done)} of {model_setup.human(total)}"))
-
-        try:
-            await asyncio.to_thread(image_gen.download, img_report)
-        except Exception as exc:
-            # Not fatal: the language model is what Fennel is for. Pictures can
-            # be tried again later, and the tool reports its own failure.
-            print(f"[image] download failed: {exc}", flush=True)
 
     # Estimate from the last successful start; the first run has no history, so
     # it gets a rough default and then records the real number for next time.

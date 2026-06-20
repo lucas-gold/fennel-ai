@@ -158,7 +158,7 @@ def download(progress: Progress) -> None:
     items = missing()
     grand = total_bytes(items)
     baseline = _cache_bytes()
-    label = "language model"
+    label = f"{config.model_info(config.LLM_MODEL)['name']} model"
     stop = threading.Event()
 
     def report_now() -> None:
@@ -174,8 +174,10 @@ def download(progress: Progress) -> None:
     watcher.start()
     try:
         for key, repo, _approx in items:
-            label = {"llm": "language model", "stt": "speech recognition",
-                     "tts": "voice", "embed": "memory"}.get(key, key)
+            label = {
+                "llm": f"{config.model_info(config.LLM_MODEL)['name']} model",
+                "stt": "speech recognition", "tts": "voice",
+                "embed": "memory"}.get(key, key)
             report_now()
             snapshot_download(repo)
     finally:
