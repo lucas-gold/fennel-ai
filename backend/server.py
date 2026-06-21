@@ -212,6 +212,9 @@ async def handler(ws) -> None:
                     _chosen_model = str(m.get("id", ""))
                     _model_chosen.set()
                 elif kind == "model_unload":
+                    _set_setup(phase="choose_model", **_picker_fields(),
+                               current=config.LLM_MODEL,
+                               note=f"Unloading {config.model_info(config.LLM_MODEL)['name']}…")
                     await _drop_llm()
                     _set_setup(phase="choose_model", **_picker_fields(),
                                current=config.LLM_MODEL, note="")
@@ -315,6 +318,12 @@ async def handler(ws) -> None:
                     # Free the resident model without choosing another. The
                     # picker offers this so "in use" can be made untrue: on a
                     # 24 GB machine you may want the RAM back before deciding.
+                    #
+                    # Say so first: freeing a 12B takes seconds, and with no
+                    # frame until it finished the x looked broken.
+                    _set_setup(phase="choose_model", **_picker_fields(),
+                               current=config.LLM_MODEL,
+                               note=f"Unloading {config.model_info(config.LLM_MODEL)['name']}…")
                     await _drop_llm()
                     _set_setup(phase="choose_model", **_picker_fields(),
                                current=config.LLM_MODEL, note="")
@@ -568,7 +577,7 @@ async def _load_everything(chosen: dict) -> None:
     # wrong for both. First run of a given model has no history and gets a
     # rough guess scaled by its size.
     eta_key = f"startup_seconds:{config.LLM_MODEL}"
-    eta = float(_store.setting(eta_key, "") or max(20.0, chosen["bytes"] / 1e9 * 8))
+    eta = float(_store.setting(eta_key, "") or max(25.0, chosen["bytes"] / 1e9 * 12 + 25))
     started = time.monotonic()
     # Weights go into unified memory one model at a time; naming each with its
     # size is more informative than a spinner, and explains where the wait goes.

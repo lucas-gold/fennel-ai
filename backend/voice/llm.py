@@ -65,6 +65,7 @@ class LLM:
                 mx.set_cache_limit(config.MLX_CACHE_LIMIT_BYTES)
             return load(model_id)
 
+        self.model_id = model_id
         self.model, self.tokenizer = self._exec.submit(_load).result()
         self._ensure_turn_end_stops()
         self._cache = self._exec.submit(make_prompt_cache, self.model).result()
@@ -161,8 +162,17 @@ class LLM:
         """
         from voice.store import APP_DIR
         key = hashlib.sha256(
-            f"{config.LLM_MODEL}|{token_count}|{self._prime_key}".encode()).hexdigest()[:16]
-        return os.path.join(APP_DIR, "primecache", f"{key}.safetensors")
+            f"{self.model_id}|{token_count}|{self._prime_key}".encode()).hexdigest()[:16]
+        # The model goes in the filename, not just the hash, so a sweep can tell
+        # one model's cache from another's. Sweeping by hash alone left exactly
+        # one file on disk for the whole app, which meant switching models threw
+        # away the cache of the model you were switching away from — and every
+        # switch back paid the full prime again.
+        return os.path.join(APP_DIR, "primecache",
+                            f"{self._model_slug()}-{key}.safetensors")
+
+    def _model_slug(self) -> str:
+        return "".join(c if c.isalnum() else "_" for c in self.model_id)[-48:]
 
     def _stable_prefix_len(self, system: str, probe: list[int]) -> int:
         """How many leading tokens of a real prompt the user cannot influence.
@@ -250,22 +260,41 @@ class LLM:
             mx.clear_cache()      # a one-off spike; don't hold it for the session
         print(f"[llm] primed {n} prefix tokens", flush=True)
 
-    def _save_prime_cache(self, path: str, n: int) -> None:
-        """Persist the primed state, keeping only the newest file.
+    #: How many models keep a primed prefix on disk. Each is a few hundred MB,
+    #: and the point of keeping more than one is that switching model and back
+    #: should not re-prime; four covers moving between a couple of favourites
+    #: without the directory growing without bound.
+    KEEP_PRIME_CACHES = 4
 
-        ~400 MB per prefix, so old ones are swept: the prefix changes when the
-        briefing does, which is daily, and a directory of stale dailies would
-        quietly eat the disk.
+    def _save_prime_cache(self, path: str, n: int) -> None:
+        """Persist the primed state.
+
+        Two kinds of staleness to sweep. This model's own older prefixes are
+        always dropped — the prefix changes whenever the briefing does, which is
+        daily, and a directory of stale dailies would quietly eat the disk.
+        Other models' caches are kept, up to KEEP_PRIME_CACHES, least recently
+        used first, so switching back to a model is cheap.
         """
         try:
-            os.makedirs(os.path.dirname(path), exist_ok=True)
-            for stale in glob.glob(os.path.join(os.path.dirname(path), "*.safetensors")):
+            folder = os.path.dirname(path)
+            os.makedirs(folder, exist_ok=True)
+            mine = os.path.join(folder, f"{self._model_slug()}-*.safetensors")
+            for stale in glob.glob(mine):
                 if stale != path:
                     try:
                         os.remove(stale)
                     except OSError:
                         pass
             save_prompt_cache(path, self._cache, metadata={"n": str(n)})
+
+            others = [f for f in glob.glob(os.path.join(folder, "*.safetensors"))
+                      if f != path]
+            others.sort(key=lambda f: os.path.getmtime(f), reverse=True)
+            for old_file in others[self.KEEP_PRIME_CACHES - 1:]:
+                try:
+                    os.remove(old_file)
+                except OSError:
+                    pass
         except Exception as exc:
             print(f"[llm] couldn't save prime cache: {exc}", flush=True)
 
