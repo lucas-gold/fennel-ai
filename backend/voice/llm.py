@@ -137,6 +137,13 @@ class LLM:
             self._exec.shutdown(wait=True)
         print("[llm] unloaded", flush=True)
 
+    @property
+    def available(self) -> bool:
+        """False once `unload` has run. Anything that would generate must check:
+        the object outlives its weights, and calling into it after that is a
+        crash rather than a slow reply."""
+        return self.model is not None
+
     def _on_mlx(self, fn, *args, **kwargs):
         """Run `fn` on the one thread MLX is allowed to see, and wait for it."""
         if threading.current_thread() is self._mlx_thread:
