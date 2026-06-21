@@ -20,3 +20,7 @@ scipy                 # resampling in tools/tests
 #   (transformers + huggingface-hub already come with mlx-lm). The packaged
 #   alternatives were worse: mlx-embeddings drags in mlx-vlm + opencv + uvicorn.
 # Feeds: urllib + xml.etree from the stdlib, no requests/feedparser.
+
+# Image generation (D-IMAGE). Pulls torch/opencv for its VAE and image IO —
+# ~650 MB, the largest single thing in the bundle after the runtime itself.
+mflux==0.19.1

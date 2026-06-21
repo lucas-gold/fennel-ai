@@ -52,6 +52,9 @@ final class ChatModel: ObservableObject {
     /// "Look things up" — Wikipedia, always free. The web tool additionally
     /// needs a key, which lives in the Keychain and never in the backend's DB.
     @Published var lookups = false
+    /// Whether Fennel may draw pictures. Off by default: it is a 4.6 GB
+    /// download and a minute of the machine's full attention per image.
+    @Published var images = false
     @Published var webKey = ""
     @Published var hasWebKey = false
     @Published var webPaused = false
@@ -224,6 +227,8 @@ final class ChatModel: ObservableObject {
             if let u = msg["system_used_bytes"] as? Int { systemUsedBytes = u }
             if let t = msg["system_total_bytes"] as? Int { systemTotalBytes = t }
             setupNote = msg["note"] as? String ?? ""
+        case "card_update":
+            applyCardUpdate(msg)
         case "memory":
             modelBytes = msg["llm_bytes"] as? Int ?? modelBytes
             overheadBytes = msg["overhead_bytes"] as? Int ?? overheadBytes
@@ -234,6 +239,7 @@ final class ChatModel: ObservableObject {
             dailyUpdates = msg["daily_updates"] as? Bool ?? false
             location = msg["location"] as? String ?? ""
             lookups = msg["lookups"] as? Bool ?? false
+            images = msg["images"] as? Bool ?? images
             modelName = msg["model_name"] as? String ?? modelName
             modelID = msg["model_id"] as? String ?? modelID
             hasWebKey = msg["has_web_key"] as? Bool ?? false
@@ -341,6 +347,7 @@ final class ChatModel: ObservableObject {
         client.send(Wire.encode("settings", ["daily_updates": dailyUpdates,
                                              "location": location,
                                              "lookups": lookups,
+                                             "images": images,
                                              "web_key": webKey]))
     }
 
@@ -397,6 +404,21 @@ final class ChatModel: ObservableObject {
     /// Raise the card immediately, then perform the real write. The backend
     /// waits ~2 s for our verdict so what it says out loud matches what
     /// happened — so always reply, success or failure.
+    /// Progress and results for a card the *backend* owns — image generation is
+    /// the only one, since every other tool is performed here in the app.
+    private func applyCardUpdate(_ msg: [String: Any]) {
+        guard let id = msg["id"] as? String,
+              let i = cards.firstIndex(where: { $0.id == id }) else { return }
+        if let d = msg["detail"] as? String { cards[i].detail = d }
+        if let p = msg["progress"] as? Double { cards[i].progress = p }
+        if let path = msg["path"] as? String { cards[i].imagePath = path }
+        switch msg["status"] as? String {
+        case "done":   withAnimation(.easeOut(duration: 0.25)) { cards[i].status = .done }
+        case "failed": cards[i].status = .failed(msg["detail"] as? String ?? "Couldn't draw that")
+        default:       cards[i].status = .working
+        }
+    }
+
     private func handleTool(_ msg: [String: Any]) {
         let id = msg["id"] as? String ?? UUID().uuidString
         guard let name = msg["name"] as? String,
@@ -406,6 +428,9 @@ final class ChatModel: ObservableObject {
         card.seq = takeSeq()
         withAnimation(.easeOut(duration: 0.18)) { cards.append(card) }
         if card.kind == .timer { startTimer(card) }
+        // The backend draws this one and reports back via card_update; there is
+        // no local write to perform and no tool_result to send.
+        if card.kind == .image { return }
 
         Task {
             do {
@@ -431,6 +456,11 @@ final class ChatModel: ObservableObject {
         _ card: HomeCard
     ) async throws -> (id: String?, data: [String: Any]?, lines: [String]) {
         switch card.kind {
+        // Drawn by the backend, which reports progress over card_update. It is
+        // filtered out before this is reached; the case is here so the switch
+        // stays exhaustive rather than silently falling through.
+        case .image:
+            return (nil, nil, [])
         case .reminder:
             let ext = try await EventKitBridge.addReminder(
                 title: card.title,

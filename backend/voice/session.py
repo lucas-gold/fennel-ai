@@ -15,6 +15,7 @@ them last in the prompt, so the cached prefix survives (D4).
 from __future__ import annotations
 
 import asyncio
+import os
 import json
 import re
 import threading
@@ -105,6 +106,9 @@ class Session:
         self._stt = stt
         self._llm = llm
         self._llm.reset()
+        # Set by the server: await it with True to have the language model
+        # unloaded, False to bring it back. Only image generation uses this.
+        self._on_need_memory = None
         self._tts = tts
         self._endpointer = Endpointer()
         self._store = store
@@ -426,6 +430,14 @@ class Session:
         fut: asyncio.Future = asyncio.get_running_loop().create_future()
         self._pending[call_id] = fut
         await self._send_control(P.encode("tool", id=call_id, name=name, args=card))
+
+        if name == "generate_image":
+            # The picture takes about a minute. The card is already on screen,
+            # so draw it in the background and let the turn finish talking —
+            # blocking here would leave the user watching a dead conversation.
+            self._pending.pop(call_id, None)
+            asyncio.create_task(self._draw_image(call_id, card))
+            return {"name": name, "ok": True, "status": "started"}
         try:
             app = await asyncio.wait_for(fut, config.TOOL_APP_TIMEOUT_S)
         except asyncio.TimeoutError:
@@ -574,6 +586,7 @@ class Session:
                 if do_speak:
                     await speak_clause(splitter.flush())
             self._last_reply_had_emoji = emoji_used
+            self._image_desc = ts.image_description.strip()
             return ts.raw, calls, said
 
         self._assistant_active = do_speak
@@ -587,6 +600,7 @@ class Session:
         if draft_temp is not None:
             print(f"[llm] drafting turn: temp={draft_temp}", flush=True)
         fired = False
+        self._image_desc = ""
         try:
             for round_ in range(config.LLM_TOOL_ROUNDS + 1):
                 raw, calls, said = await llm_pass()
@@ -635,6 +649,23 @@ class Session:
                 visible += said
                 if self._live(epoch):
                     self._messages.append({"role": "assistant", "content": raw})
+            # Smaller models answer "draw me X" by writing an
+            # <image_description> block instead of calling generate_image, and
+            # no amount of telling them otherwise fixes it. The block is a
+            # perfectly good prompt, so use it: the user asked for a picture and
+            # gets one, rather than an empty reply where the tag was stripped.
+            if (self._image_desc and self._live(epoch)
+                    and not any(c["name"] == "generate_image" for c in calls)
+                    and self._store.setting("images", "0") == "1"):
+                if not visible.strip():
+                    # The whole reply was the description, which is stripped —
+                    # so without this the user gets an empty bubble and a card
+                    # appearing out of nowhere.
+                    line = "Drawing that now — it takes about a minute."
+                    visible += line
+                    await self._send_control(
+                        P.encode("token", turn=turn, text=line))
+                await self._draw_described(self._image_desc)
         finally:
             self._assistant_active = False
             if self._live(epoch):
@@ -650,6 +681,68 @@ class Session:
                 partial = (spoken.strip() + " —").strip()
                 self._messages.append({"role": "assistant", "content": partial})
                 self._commit(turn_start, partial)
+
+    async def _draw_described(self, description: str) -> None:
+        """Raise an image card for a description the model wrote instead of
+        calling the tool, and draw it."""
+        from voice.tools import normalize
+        card, _ = normalize("generate_image", {"prompt": description})
+        if not card:
+            return
+        call_id = uuid4().hex[:8]
+        print("[image] model described instead of calling; drawing it anyway",
+              flush=True)
+        await self._send_control(
+            P.encode("tool", id=call_id, name="generate_image", args=card))
+        asyncio.create_task(self._draw_image(call_id, card))
+
+    async def _draw_image(self, card_id: str, card: dict) -> None:
+        """Render a picture and post it back to its card.
+
+        Runs outside the turn: generation takes about a minute, and the model
+        that asked for it should be free to keep talking meanwhile.
+        """
+        from voice import images, sysmem
+
+        async def update(**fields) -> None:
+            await self._send_control(P.encode("card_update", id=card_id, **fields))
+
+        snap = sysmem.snapshot(0)
+        free = max(0, snap["system_total_bytes"] - snap["system_used_bytes"])
+        pixels, low_ram, unload = images.plan(free)
+        if not images.installed():
+            await update(status="working", detail="Downloading the image model — 4.6 GB, once")
+        else:
+            await update(status="working", detail="Starting…")
+
+        loop = asyncio.get_running_loop()
+
+        def report(detail: str, frac: float) -> None:
+            loop.call_soon_threadsafe(
+                lambda: asyncio.create_task(update(status="working",
+                                                   detail=detail, progress=frac)))
+
+        out = os.path.join(images.images_dir(), f"{card_id}.png")
+        released = False
+        try:
+            if unload and self._on_need_memory is not None:
+                # Not enough room beside the language model. Give it back for
+                # the duration rather than letting the machine swap, which would
+                # cost far more than the reload does.
+                await update(status="working", detail="Freeing memory…")
+                await self._on_need_memory(True)
+                released = True
+            await asyncio.to_thread(
+                images.generate, card["prompt"], out,
+                pixels=pixels, low_ram=low_ram, progress=report)
+            await update(status="done", path=out)
+            print(f"[image] delivered {out}", flush=True)
+        except Exception as exc:
+            print(f"[image] failed: {exc}", flush=True)
+            await update(status="failed", detail=str(exc)[:160])
+        finally:
+            if released and self._on_need_memory is not None:
+                await self._on_need_memory(False)
 
     def rebind_llm(self, llm: LLM) -> None:
         """Point this conversation at a newly loaded model.

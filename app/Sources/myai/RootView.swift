@@ -463,6 +463,13 @@ private struct SettingsMenu: View {
                     note: "Lets Fennel look things up when it doesn't know something. Free, and it sends your search terms — and nothing else — to Wikipedia.")
 
                 if chat.lookups { webSearchKey }
+
+                Divider()
+
+                toggleRow("Draw pictures", isOn: Binding(
+                    get: { chat.images },
+                    set: { chat.images = $0; chat.saveSettings() }),
+                    note: "Lets Fennel make images from a description, on this Mac. Downloads a 4.6 GB model the first time; each picture takes about a minute and needs the memory, so it may set the language model aside while it draws.")
             }
             .padding(16)
             .frame(width: 320)
