@@ -43,6 +43,11 @@ UVPY=$(ls -d "$HOME/.local/share/uv/python/cpython-3.12"*-macos-aarch64-none 2>/
 mkdir -p "$RES/runtime"
 cp -R "$UVPY"/. "$RES/runtime"/
 cp -R backend/.venv/lib/python3.12/site-packages/. "$RES/runtime/lib/python3.12/site-packages"/
+# A second name for the interpreter, so Activity Monitor says "Fennel" rather
+# than "python3.12". A hard link, not a copy: same 17 MB file, one more
+# directory entry, and the process name comes from the path used to exec it.
+# Python still finds its prefix because the name sits in the same bin/.
+ln -f "$RES/runtime/bin/python3.12" "$RES/runtime/bin/Fennel"
 
 echo "==> backend source"
 mkdir -p "$RES/backend"

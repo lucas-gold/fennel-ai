@@ -129,7 +129,7 @@ private struct FirstRunOverlay: View {
 
         case "downloading":
             VStack(spacing: 12) {
-                Text("Downloading \(chat.modelName.isEmpty ? "models" : chat.modelName)")
+                Text("Downloading \(chat.modelName.isEmpty ? "models" : chat.modelName) Model")
                     .font(Theme.title(16, .semibold))
                 VStack(spacing: 6) {
                     ProgressView(value: chat.setupProgress)

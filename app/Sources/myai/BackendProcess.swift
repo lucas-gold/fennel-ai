@@ -21,9 +21,17 @@ final class BackendProcess {
 
     func start() {
         let res = Bundle.main.resourceURL
-        guard let python = res?.appendingPathComponent("runtime/bin/python3.12"),
+        // "runtime/bin/Fennel" is a hard link to the same interpreter, there so
+        // that Activity Monitor names the process after the app rather than
+        // after python3.12 — the name comes from the path used to exec it.
+        // Older bundles have only the original name.
+        let named = res?.appendingPathComponent("runtime/bin/Fennel")
+        let plain = res?.appendingPathComponent("runtime/bin/python3.12")
+        let interpreter = [named, plain].compactMap { $0 }.first {
+            FileManager.default.isExecutableFile(atPath: $0.path)
+        }
+        guard let python = interpreter,
               let server = res?.appendingPathComponent("backend/server.py"),
-              FileManager.default.isExecutableFile(atPath: python.path),
               FileManager.default.fileExists(atPath: server.path)
         else {
             print("[backend] not bundled; expecting a server already running")
