@@ -62,11 +62,26 @@ struct ModelPicker: View {
             confirmBar
 
             // No hint that anything is hidden — that is the point of hiding it.
-            Text("Downloaded models live in ~/.cache/huggingface and can be removed here at any time.")
-                .font(.system(size: 10)).foregroundStyle(.tertiary)
-                .multilineTextAlignment(.center)
+            // The path is a dot-directory, so it is easier to open than to
+            // navigate to; saying where they live and not offering to show you
+            // was half an answer.
+            Button {
+                let dir = FileManager.default.homeDirectoryForCurrentUser
+                    .appendingPathComponent(".cache/huggingface/hub")
+                NSWorkspace.shared.open(dir)
+            } label: {
+                Text("Downloaded models live in ~/.cache/huggingface and can be removed here at any time.")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.tertiary)
+                    .underline()
+                    .multilineTextAlignment(.center)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("Open the folder in Finder")
         }
         .padding(.horizontal, 22)
+        .padding(.bottom, 10)
     }
 
     /// Hidden rows stay out of the way until Option-clicked — except when one
