@@ -64,6 +64,14 @@ _LEAD_IN = re.compile(
     r"^(picture (this|a|an)|imagine( this)?|here('?s| is) (a|an|the)|"
     r"visualise|visualize|envision)\b[:,]?\s*", re.I)
 
+#: The user's own request, when the model produced nothing usable, arrives as
+#: "generate a logo for an AI company". The ask is not part of the picture, and
+#: leaving it in gave cards titled "generate a logo for an AI".
+_REQUEST = re.compile(
+    r"^\s*(please\s+)?(can you\s+|could you\s+|i('| a)?m looking for\s+)?"
+    r"(draw|sketch|paint|render|generate|create|make|design|show)\s+"
+    r"(me\s+)?(a|an|the|some)?\s*", re.I)
+
 TOOLS: list[dict] = [
     {
         "type": "function",
@@ -762,9 +770,11 @@ def normalize(name: str, args: dict) -> tuple[dict, dict]:
         # Models that describe rather than call open with a stage direction.
         # It belongs in neither the title nor the prompt.
         prompt = _LEAD_IN.sub("", prompt).strip()
+        # Title from what the picture *is*, not from how it was asked for.
+        subject = _REQUEST.sub("", prompt).strip() or prompt
         if not prompt:
             return {}, {"ok": False, "error": "no description given; ask what to draw"}
-        title = str(args.get("subject", "")).strip() or _short_title(prompt)
+        title = str(args.get("subject", "")).strip() or _short_title(subject)
         card = {"title": title[:60], "prompt": prompt[:600]}
         # The result the model sees is deliberately not "done": the picture is
         # still a minute away, and a model told the tool succeeded will happily

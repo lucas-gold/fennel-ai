@@ -70,7 +70,7 @@ def _feature_settings() -> dict[str, bool]:
     on = _store.setting("lookups", "0") == "1"
     return {"lookups": on,
             "web_key": on and bool(_store.setting("web_key", "")),
-            "images": _store.setting("images", "0") == "1"}
+            "images": (_store.setting("images", "1") or "1") == "1"}
 
 
 async def _refresh_briefing(session: Session) -> None:
@@ -161,7 +161,7 @@ def _settings_payload() -> dict:
         "models": config.local_models(),
         "model_name": config.model_info(config.LLM_MODEL)["name"],
         "model_id": config.LLM_MODEL,
-        "images": _store.setting("images", "0") == "1",
+        "images": (_store.setting("images", "1") or "1") == "1",
     }
 
 
@@ -233,6 +233,14 @@ async def handler(ws) -> None:
                 elif kind == "model_cancel":
                     print("[setup] cancel requested", flush=True)
                     _cancel_load.set()
+                elif kind == "image_delete":
+                    try:
+                        freed = await asyncio.to_thread(image_gen.delete)
+                        note = "" if freed else "Nothing to delete."
+                    except Exception as exc:
+                        note = str(exc)
+                    _set_setup(phase="choose_model", **_picker_fields(),
+                               current=config.LLM_MODEL, note=note)
                 elif kind == "model_delete":
                     # Deleting is allowed while the picker is up because nothing
                     # is loaded yet; once a model is in memory it is protected.
@@ -320,6 +328,14 @@ async def handler(ws) -> None:
                 elif msg["type"] == "model_cancel":
                     print("[setup] cancel requested", flush=True)
                     _cancel_load.set()
+                elif msg["type"] == "image_delete":
+                    try:
+                        freed = await asyncio.to_thread(image_gen.delete)
+                        note = "" if freed else "Nothing to delete."
+                    except Exception as exc:
+                        note = str(exc)
+                    _set_setup(phase="choose_model", **_picker_fields(),
+                               current=config.LLM_MODEL, note=note)
                 elif msg["type"] == "model_delete":
                     try:
                         model_setup.delete(str(msg.get("id", "")),
@@ -548,12 +564,13 @@ def _picker_fields() -> dict:
             "id": image_gen.MODEL_REPO,
             "name": "Image generation",
             "detail": "FLUX.2 Klein · 4B",
-            "focus": ("Draws pictures from a description, on this Mac. About a "
-                      "minute each. Loads only while drawing, so it costs "
-                      "nothing until you ask."),
+            "focus": ("Offline image generation completely on your Mac. "
+                      "~1 min/picture. No memory cost until called."),
             "bytes": image_gen.MODEL_BYTES,
             "installed": image_gen.installed(),
-            "enabled": _store.setting("images", "0") == "1",
+            "enabled": (_store.setting("images", "1") or "1") == "1",
+            # Measured with mflux's own reporting at 768px in low-RAM mode.
+            "peak_bytes": image_gen.PEAK_LOWRAM_BYTES,
         },
         "overhead_bytes": overhead,
         "llm_bytes": _llm_bytes,

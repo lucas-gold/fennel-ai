@@ -36,15 +36,12 @@ Progress = Callable[[str, float], None]        # (detail, 0..1)
 
 
 def images_dir() -> str:
-    """Where finished pictures go: the Downloads folder.
+    """Where finished pictures live until the user wants one.
 
-    Not Application Support. A picture is something you want to use — attach,
-    post, drag into something else — and a path nobody can find is the same as
-    no picture. Falls back to the app's own folder if Downloads is missing.
+    The app's own folder, not Downloads: every picture landing in Downloads
+    uninvited is clutter, and most of them are a look rather than a keeper. The
+    card has a download button for the ones worth keeping.
     """
-    downloads = os.path.expanduser("~/Downloads")
-    if os.path.isdir(downloads):
-        return downloads
     path = os.path.join(APP_DIR, "images")
     os.makedirs(path, exist_ok=True)
     return path
@@ -60,6 +57,20 @@ def installed() -> bool:
     """Whether the diffusion weights are already downloaded."""
     from voice.setup import _weights_on_disk
     return MODEL_REPO in _weights_on_disk()
+
+
+def delete() -> int:
+    """Remove the diffusion weights from the hub cache. Returns bytes freed."""
+    from huggingface_hub import scan_cache_dir
+    cache = scan_cache_dir()
+    hashes = [r.commit_hash for c in cache.repos if c.repo_id == MODEL_REPO
+              for r in c.revisions]
+    if not hashes:
+        return 0
+    freed = sum(c.size_on_disk for c in cache.repos if c.repo_id == MODEL_REPO)
+    cache.delete_revisions(*hashes).execute()
+    print(f"[image] deleted the image model ({freed / 1e9:.1f} GB)", flush=True)
+    return freed
 
 
 def plan(free_bytes: int) -> tuple[int, bool, bool]:

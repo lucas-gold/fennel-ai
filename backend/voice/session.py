@@ -678,7 +678,7 @@ class Session:
             # perfectly good prompt, so use it: the user asked for a picture and
             # gets one, rather than an empty reply where the tag was stripped.
             drew = any(c["name"] == "generate_image" for c in calls)
-            want_image = (self._store.setting("images", "0") == "1"
+            want_image = ((self._store.setting("images", "1") or "1") == "1"
                           and not drew and self._live(epoch)
                           and (self._image_desc or _DRAWY.search(text or "")))
             if want_image:

@@ -44,9 +44,12 @@ struct ModelPicker: View {
                     .font(.system(size: 11)).foregroundStyle(.orange)
             }
 
+            // Pinned above the list, not scrolled with it: it is a switch that
+            // applies whatever you pick below, so it should not slide away.
+            if let img = chat.imageModel { imageRow(img) }
+
             ScrollView {
                 VStack(spacing: 8) {
-                    if let img = chat.imageModel { imageRow(img) }
                     ForEach(visibleModels) { m in
                         row(m)
                     }
@@ -89,48 +92,57 @@ struct ModelPicker: View {
     /// a switch rather than a choice, since it never runs on its own — you still
     /// have to pick something to talk to.
     private func imageRow(_ m: ModelOption) -> some View {
-        HStack(alignment: .top, spacing: 12) {
+        HStack(spacing: 10) {
             Image(systemName: "photo.artframe")
-                .font(.system(size: 15))
+                .font(.system(size: 14))
                 .foregroundStyle(chat.imagesEnabled ? Color.purple : Color.secondary)
-                .frame(width: 20)
-                .padding(.top, 2)
-            VStack(alignment: .leading, spacing: 4) {
-                Text(m.name).font(.system(size: 13.5, weight: .semibold))
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 6) {
+                    Text(m.name).font(.system(size: 12.5, weight: .semibold))
+                    Text(m.detail).font(.system(size: 10.5)).foregroundStyle(.secondary)
+                }
                 Text(m.focus)
-                    .font(.system(size: 11)).foregroundStyle(.secondary)
-                    .lineSpacing(2)
-                    .fixedSize(horizontal: false, vertical: true)
-                Label(imageState(m), systemImage: m.installed
-                      ? "internaldrive" : "arrow.down.circle")
-                    .font(.system(size: 10))
-                    .foregroundStyle(m.installed ? Color.green
-                                     : (chat.imagesEnabled ? Color.orange : Color.secondary))
+                    .font(.system(size: 10.5)).foregroundStyle(.secondary)
+                    .lineLimit(1)
+                Text(imageState(m))
+                    .font(.system(size: 9.5))
+                    .foregroundStyle(m.installed ? Color.secondary : Color.orange)
             }
-            Spacer(minLength: 0)
+            Spacer(minLength: 6)
+            if m.installed {
+                Button { chat.deleteImageModel() } label: {
+                    Image(systemName: "trash").font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 20, height: 18)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("Delete the image model")
+            }
             Toggle("", isOn: Binding(get: { chat.imagesEnabled },
                                      set: { chat.setImagesEnabled($0) }))
                 .toggleStyle(.switch)
-                .controlSize(.small)
+                .controlSize(.mini)
                 .labelsHidden()
         }
-        .padding(.horizontal, 13)
-        .padding(.vertical, 11)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
+            RoundedRectangle(cornerRadius: 11, style: .continuous)
                 .fill(Theme.bubble)
-                .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .overlay(RoundedRectangle(cornerRadius: 11, style: .continuous)
                     .strokeBorder(chat.imagesEnabled
                                   ? Color.purple.opacity(0.45)
                                   : Color.primary.opacity(0.07), lineWidth: 1)))
     }
 
     private func imageState(_ m: ModelOption) -> String {
-        if m.installed { return "Installed · \(ModelOption.gb(m.bytes))" }
-        return chat.imagesEnabled
-            ? "Will download \(ModelOption.gb(m.bytes)) the first time you ask"
-            : "Downloads \(ModelOption.gb(m.bytes)) when first used"
+        let peak = m.peakBytes > 0
+            ? "  ·  ~\(ModelOption.gb(m.peakBytes)) in memory during image generation only"
+            : ""
+        if m.installed { return "Installed · \(ModelOption.gb(m.bytes))" + peak }
+        return "Downloads \(ModelOption.gb(m.bytes)) the first time you ask" + peak
     }
 
     private func row(_ m: ModelOption) -> some View {
