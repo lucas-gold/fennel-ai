@@ -21,7 +21,7 @@ import websockets
 
 import config
 import protocol as P
-from voice import embed, setup as model_setup, sysmem
+from voice import embed, images as image_gen, setup as model_setup, sysmem
 from voice.briefing import Briefing, Retriever
 from voice.llm import LLM
 from voice.memory import Memory
@@ -217,6 +217,12 @@ async def handler(ws) -> None:
                     global _chosen_model
                     _chosen_model = str(m.get("id", ""))
                     _model_chosen.set()
+                elif kind == "image_toggle":
+                    _store.set_setting(
+                        "images",
+                        "1" if m.get("enabled") else "0")
+                    _set_setup(phase="choose_model", **_picker_fields(),
+                               current=config.LLM_MODEL, note="")
                 elif kind == "model_unload":
                     _set_setup(phase="choose_model", **_picker_fields(),
                                current=config.LLM_MODEL,
@@ -323,6 +329,12 @@ async def handler(ws) -> None:
                         note = str(exc)
                     _set_setup(phase="choose_model", **_picker_fields(),
                                current=config.LLM_MODEL, note=note)
+                elif msg["type"] == "image_toggle":
+                    _store.set_setting(
+                        "images",
+                        "1" if msg.get("enabled") else "0")
+                    _set_setup(phase="choose_model", **_picker_fields(),
+                               current=config.LLM_MODEL, note="")
                 elif msg["type"] == "model_unload":
                     # Free the resident model without choosing another. The
                     # picker offers this so "in use" can be made untrue: on a
@@ -529,6 +541,20 @@ def _picker_fields() -> dict:
         "models": model_setup.catalogue(),
         # Which model is actually resident, as opposed to merely last chosen.
         "loaded": config.LLM_MODEL if _llm is not None else "",
+        # The picture model rides along on the picker rather than hiding in the
+        # network panel: it is a model, it is 4.6 GB, and it belongs where the
+        # other models and the RAM arithmetic are.
+        "image_model": {
+            "id": image_gen.MODEL_REPO,
+            "name": "Image generation",
+            "detail": "FLUX.2 Klein · 4B",
+            "focus": ("Draws pictures from a description, on this Mac. About a "
+                      "minute each. Loads only while drawing, so it costs "
+                      "nothing until you ask."),
+            "bytes": image_gen.MODEL_BYTES,
+            "installed": image_gen.installed(),
+            "enabled": _store.setting("images", "0") == "1",
+        },
         "overhead_bytes": overhead,
         "llm_bytes": _llm_bytes,
         "system_used_bytes": snap["system_used_bytes"],

@@ -34,6 +34,32 @@ _CTX_OPEN, _CTX_CLOSE = "<context>", "</context>"
 # tag never reaches the screen or the speaker when it does it anyway.
 _DESC_OPEN, _DESC_CLOSE = "<image_description>", "</image_description>"
 
+#: Words a title must not end on. Prepositions and articles because they leave
+#: it hanging; the participles and adjectives because a six-word cut through a
+#: longer description lands on them and reads as truncation rather than a name.
+_TRAILING = {"a", "an", "the", "with", "of", "in", "on", "at", "and", "for",
+             "to", "its", "his", "her", "their", "that", "which", "is", "are",
+             "called", "named", "featuring", "showing", "wearing", "holding",
+             "huge", "big", "small", "tiny", "bright", "dark", "very", "more"}
+
+
+def _short_title(prompt: str) -> str:
+    """A name for the card: "cat sleeping on a bed", not the first six words of
+    a paragraph stopping mid-phrase.
+
+    Prefers the first clause — descriptions are comma-separated lists, and the
+    part before the first comma is almost always the subject.
+    """
+    first = re.split(r"[,;.]", prompt, maxsplit=1)[0]
+    words = first.split()
+    if words and words[0].lower() in {"a", "an", "the"}:
+        words = words[1:]
+    words = words[:6]
+    while words and words[-1].strip(",.").lower() in _TRAILING:
+        words.pop()
+    return " ".join(words).strip(" ,.;:") or "Picture"
+
+
 _LEAD_IN = re.compile(
     r"^(picture (this|a|an)|imagine( this)?|here('?s| is) (a|an|the)|"
     r"visualise|visualize|envision)\b[:,]?\s*", re.I)
@@ -738,7 +764,7 @@ def normalize(name: str, args: dict) -> tuple[dict, dict]:
         prompt = _LEAD_IN.sub("", prompt).strip()
         if not prompt:
             return {}, {"ok": False, "error": "no description given; ask what to draw"}
-        title = str(args.get("subject", "")).strip() or " ".join(prompt.split()[:5])
+        title = str(args.get("subject", "")).strip() or _short_title(prompt)
         card = {"title": title[:60], "prompt": prompt[:600]}
         # The result the model sees is deliberately not "done": the picture is
         # still a minute away, and a model told the tool succeeded will happily

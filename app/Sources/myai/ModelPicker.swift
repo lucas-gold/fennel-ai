@@ -46,6 +46,7 @@ struct ModelPicker: View {
 
             ScrollView {
                 VStack(spacing: 8) {
+                    if let img = chat.imageModel { imageRow(img) }
                     ForEach(visibleModels) { m in
                         row(m)
                     }
@@ -82,6 +83,54 @@ struct ModelPicker: View {
         let free = max(0, chat.systemTotalBytes - chat.systemUsedBytes)
         return "Total RAM: \(ModelOption.gb(chat.systemTotalBytes))    "
              + "Available RAM: \(ModelOption.gb(free))"
+    }
+
+    /// The picture model, above the language models and not one of them: it is
+    /// a switch rather than a choice, since it never runs on its own — you still
+    /// have to pick something to talk to.
+    private func imageRow(_ m: ModelOption) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: "photo.artframe")
+                .font(.system(size: 15))
+                .foregroundStyle(chat.imagesEnabled ? Color.purple : Color.secondary)
+                .frame(width: 20)
+                .padding(.top, 2)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(m.name).font(.system(size: 13.5, weight: .semibold))
+                Text(m.focus)
+                    .font(.system(size: 11)).foregroundStyle(.secondary)
+                    .lineSpacing(2)
+                    .fixedSize(horizontal: false, vertical: true)
+                Label(imageState(m), systemImage: m.installed
+                      ? "internaldrive" : "arrow.down.circle")
+                    .font(.system(size: 10))
+                    .foregroundStyle(m.installed ? Color.green
+                                     : (chat.imagesEnabled ? Color.orange : Color.secondary))
+            }
+            Spacer(minLength: 0)
+            Toggle("", isOn: Binding(get: { chat.imagesEnabled },
+                                     set: { chat.setImagesEnabled($0) }))
+                .toggleStyle(.switch)
+                .controlSize(.small)
+                .labelsHidden()
+        }
+        .padding(.horizontal, 13)
+        .padding(.vertical, 11)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(Theme.bubble)
+                .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .strokeBorder(chat.imagesEnabled
+                                  ? Color.purple.opacity(0.45)
+                                  : Color.primary.opacity(0.07), lineWidth: 1)))
+    }
+
+    private func imageState(_ m: ModelOption) -> String {
+        if m.installed { return "Installed · \(ModelOption.gb(m.bytes))" }
+        return chat.imagesEnabled
+            ? "Will download \(ModelOption.gb(m.bytes)) the first time you ask"
+            : "Downloads \(ModelOption.gb(m.bytes)) when first used"
     }
 
     private func row(_ m: ModelOption) -> some View {
