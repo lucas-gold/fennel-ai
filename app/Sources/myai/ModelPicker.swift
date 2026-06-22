@@ -142,7 +142,7 @@ struct ModelPicker: View {
             ? "  ·  ~\(ModelOption.gb(m.peakBytes)) in memory during image generation only"
             : ""
         if m.installed { return "Installed · \(ModelOption.gb(m.bytes))" + peak }
-        return "Downloads \(ModelOption.gb(m.bytes)) the first time you ask" + peak
+        return "Downloads \(ModelOption.gb(m.bytes)) when you continue" + peak
     }
 
     private func row(_ m: ModelOption) -> some View {

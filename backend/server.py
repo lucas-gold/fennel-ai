@@ -564,7 +564,7 @@ def _picker_fields() -> dict:
             "id": image_gen.MODEL_REPO,
             "name": "Image generation",
             "detail": "FLUX.2 Klein · 4B",
-            "focus": ("Offline image generation completely on your Mac. "
+            "focus": ("Image generation completely on your Mac. "
                       "~1 min/picture. No memory cost until called."),
             "bytes": image_gen.MODEL_BYTES,
             "installed": image_gen.installed(),
@@ -649,6 +649,29 @@ async def _load_everything(chosen: dict) -> None:
                        detail=f"Download failed: {exc}. Check your connection "
                               "and reopen Fennel.")
             return
+
+    # The picture model, if it is switched on and not yet here. Downloaded with
+    # the rest rather than in the middle of the first request for a picture.
+    if (_store.setting("images", "1") or "1") == "1" and not image_gen.installed():
+        _check_cancel()
+        size = model_setup.human(image_gen.MODEL_BYTES)
+        _set_setup(phase="downloading", progress=0.0, size=size,
+                   detail="Downloading the image model — 4.6 GB, once")
+        loop = asyncio.get_running_loop()
+
+        def img_report(done: int, total: int) -> None:
+            loop.call_soon_threadsafe(partial(
+                _set_setup, phase="downloading", size=size,
+                progress=min(1.0, done / total) if total else 0.0,
+                detail=f"Downloading the image model — "
+                       f"{model_setup.human(done)} of {model_setup.human(total)}"))
+
+        try:
+            await asyncio.to_thread(image_gen.download, img_report)
+        except Exception as exc:
+            # Not fatal: the language model is what Fennel is for. Pictures can
+            # be tried again later, and the tool reports its own failure.
+            print(f"[image] download failed: {exc}", flush=True)
 
     # Estimate from the last successful start; the first run has no history, so
     # it gets a rough default and then records the real number for next time.
