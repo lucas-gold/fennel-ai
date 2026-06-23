@@ -41,6 +41,12 @@ def _repos() -> list[tuple[str, str, int]]:
     ]
 
 
+#: Not every model ships safetensors. Whisper's MLX build is a single
+#: weights.npz, and checking only for safetensors reported it as absent — which
+#: would have re-downloaded half a gigabyte on every launch.
+_WEIGHTS = (".safetensors", ".npz", ".bin", ".pth", ".gguf")
+
+
 def _weights_on_disk() -> dict[str, int]:
     """repo_id -> bytes of weights actually present.
 
@@ -58,7 +64,7 @@ def _weights_on_disk() -> dict[str, int]:
     for repo in cache.repos:
         total = sum(f.size_on_disk
                     for rev in repo.revisions for f in rev.files
-                    if f.file_name.endswith(".safetensors"))
+                    if f.file_name.endswith(_WEIGHTS))
         if total:
             out[repo.repo_id] = total
     return out
@@ -111,8 +117,14 @@ def _cached_repo_ids() -> set[str]:
 
 
 def missing() -> list[tuple[str, str, int]]:
-    """Which models still need downloading. Empty means we can start offline."""
-    have = _cached_repo_ids()
+    """Which models still need downloading. Empty means we can start offline.
+
+    Weights, not the cache index. A repo whose blobs have been deleted — or one
+    only ever fetched for its config — is still listed in the index, and taking
+    that as proof of presence meant the download step was skipped and the model
+    fetched later, at load time, without ever passing the consent screen.
+    """
+    have = _weights_on_disk()
     return [(k, r, n) for k, r, n in _repos() if r not in have]
 
 
