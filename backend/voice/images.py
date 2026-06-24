@@ -41,7 +41,33 @@ PEAK_LOWRAM_BYTES = 3_200_000_000
 PEAK_FULL_BYTES = 5_000_000_000
 
 _STEP = re.compile(r"(\d+)/(\d+)\s*\[")
+
+#: Running renders, by card id, so dismissing a card can stop the work rather
+#: than leaving a minute of computation running for a picture nobody wants.
+_procs: dict = {}
+#: Cards dismissed before their render began. A queued picture has no process
+#: to kill, so cancelling it has to be remembered until its turn comes round —
+#: otherwise dismissing the second of two just delayed it by a minute.
+_cancelled: set = set()
+_procs_lock = threading.Lock()
+
+
+def cancel(token: str) -> bool:
+    """Stop a render, whether it is running or still waiting its turn."""
+    with _procs_lock:
+        _cancelled.add(token)
+        proc = _procs.get(token)
+    if proc is not None and proc.poll() is None:
+        proc.kill()
+        print(f"[image] cancelled {token} (was running)", flush=True)
+        return True
+    print(f"[image] cancelled {token} (before it started)", flush=True)
+    return False
 Progress = Callable[[str, float], None]        # (detail, 0..1)
+
+
+class Cancelled(Exception):
+    """The card was dismissed while its picture was being drawn."""
 
 
 def images_dir() -> str:
@@ -129,7 +155,7 @@ def plan(free_bytes: int) -> tuple[int, bool, bool]:
 
 def generate(prompt: str, out_path: str, *, pixels: int = 1024,
              low_ram: bool = False, steps: int = 4, seed: Optional[int] = None,
-             progress: Optional[Progress] = None,
+             progress: Optional[Progress] = None, token: str = "",
              timeout: float = 900.0) -> str:
     """Render `prompt` to `out_path`. Returns the path; raises on failure."""
     argv = [sys.executable, "-m", "mflux.models.flux2.cli.flux2_generate",
@@ -142,12 +168,21 @@ def generate(prompt: str, out_path: str, *, pixels: int = 1024,
     if seed is not None:
         argv += ["--seed", str(seed)]
 
+    if token:
+        with _procs_lock:
+            if token in _cancelled:
+                _cancelled.discard(token)
+                raise Cancelled()
+
     env = dict(os.environ, TQDM_MININTERVAL="0.5")
     started = time.monotonic()
     sysmem.mark_child_start()
     proc = subprocess.Popen(argv, stdout=subprocess.PIPE,
                             stderr=subprocess.STDOUT, text=True,
                             bufsize=1, env=env)
+    if token:
+        with _procs_lock:
+            _procs[token] = proc
     tail: list[str] = []
     peak = [0]
 
@@ -177,6 +212,12 @@ def generate(prompt: str, out_path: str, *, pixels: int = 1024,
         raise RuntimeError("image generation timed out")
     reader.join(timeout=2)
     sysmem.mark_child_end()
+    if token:
+        with _procs_lock:
+            _procs.pop(token, None)
+            _cancelled.discard(token)
+    if proc.returncode is not None and proc.returncode < 0:
+        raise Cancelled()
 
     if proc.returncode != 0 or not os.path.exists(out_path):
         why = "".join(tail).strip().splitlines()
