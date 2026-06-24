@@ -223,6 +223,24 @@ async def handler(ws) -> None:
                         "1" if m.get("enabled") else "0")
                     _set_setup(phase="choose_model", **_picker_fields(),
                                current=config.LLM_MODEL, note="")
+                elif kind == "model_probe":
+                    result = await asyncio.to_thread(
+                        model_setup.probe, str(m.get("id", "")))
+                    await _broadcast(P.encode("model_probe", **result))
+                elif kind == "model_add":
+                    row = await asyncio.to_thread(
+                        model_setup.probe, str(m.get("id", "")))
+                    if row.get("ok"):
+                        model_setup.add_custom({
+                            "id": row["id"], "name": row["name"],
+                            "detail": row.get("detail", ""), "focus": "",
+                            "bytes": row.get("bytes", 0),
+                            "tools": row.get("tools", True),
+                        })
+                    _set_setup(phase="choose_model", **_picker_fields(),
+                               current=config.LLM_MODEL,
+                               note="" if row.get("ok")
+                                    else "; ".join(row.get("problems", [])))
                 elif kind == "model_unload":
                     _set_setup(phase="choose_model", **_picker_fields(),
                                current=config.LLM_MODEL,
@@ -253,6 +271,7 @@ async def handler(ws) -> None:
                         model_setup.delete(
                             str(m.get("id", "")),
                             in_use=config.LLM_MODEL if _ready.is_set() else None)
+                        model_setup.forget_custom(str(m.get("id", "")))
                         note = ""
                     except Exception as exc:
                         note = str(exc)
@@ -350,6 +369,7 @@ async def handler(ws) -> None:
                     try:
                         model_setup.delete(str(msg.get("id", "")),
                                            in_use=config.LLM_MODEL)
+                        model_setup.forget_custom(str(msg.get("id", "")))
                         note = ""
                     except Exception as exc:
                         note = str(exc)
@@ -361,6 +381,24 @@ async def handler(ws) -> None:
                         "1" if msg.get("enabled") else "0")
                     _set_setup(phase="choose_model", **_picker_fields(),
                                current=config.LLM_MODEL, note="")
+                elif msg["type"] == "model_probe":
+                    result = await asyncio.to_thread(
+                        model_setup.probe, str(msg.get("id", "")))
+                    await _broadcast(P.encode("model_probe", **result))
+                elif msg["type"] == "model_add":
+                    row = await asyncio.to_thread(
+                        model_setup.probe, str(msg.get("id", "")))
+                    if row.get("ok"):
+                        model_setup.add_custom({
+                            "id": row["id"], "name": row["name"],
+                            "detail": row.get("detail", ""), "focus": "",
+                            "bytes": row.get("bytes", 0),
+                            "tools": row.get("tools", True),
+                        })
+                    _set_setup(phase="choose_model", **_picker_fields(),
+                               current=config.LLM_MODEL,
+                               note="" if row.get("ok")
+                                    else "; ".join(row.get("problems", [])))
                 elif msg["type"] == "model_unload":
                     # Free the resident model without choosing another. The
                     # picker offers this so "in use" can be made untrue: on a

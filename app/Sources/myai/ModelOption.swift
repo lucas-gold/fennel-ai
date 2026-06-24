@@ -14,7 +14,7 @@ struct ModelOption: Identifiable, Equatable {
     let tools: Bool           // whether its template renders Fennel's tools
     let installed: Bool
     let onDisk: Int           // bytes it currently occupies, 0 if absent
-    let hidden: Bool          // kept off the list until asked for
+    let custom: Bool          // added by the user, not from the registry
     let peakBytes: Int        // image model: memory at full size
     let peakLowBytes: Int     // ...and when memory is tight
 
@@ -29,7 +29,7 @@ struct ModelOption: Identifiable, Equatable {
         tools = json["tools"] as? Bool ?? true
         installed = json["installed"] as? Bool ?? false
         onDisk = json["on_disk"] as? Int ?? 0
-        hidden = json["hidden"] as? Bool ?? false
+        custom = json["custom"] as? Bool ?? false
         peakBytes = json["peak_bytes"] as? Int ?? 0
         peakLowBytes = json["peak_low_bytes"] as? Int ?? 0
     }

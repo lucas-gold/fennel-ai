@@ -80,6 +80,9 @@ final class ChatModel: ObservableObject {
     /// What Fennel holds besides the model — Whisper, Kokoro, the embedder and
     /// the Python runtime.
     @Published var overheadBytes = 0
+    /// The last answer from checking a pasted model path.
+    @Published var probe: [String: Any] = [:]
+    @Published var probing = false
     /// The SwiftUI app's own resident size. A separate process from the
     /// backend, so it has to be added in rather than assumed included.
     @Published var appBytes = 0
@@ -246,6 +249,9 @@ final class ChatModel: ObservableObject {
             busyDetail = msg["detail"] as? String ?? ""
         case "card_update":
             applyCardUpdate(msg)
+        case "model_probe":
+            probing = false
+            probe = msg
         case "memory":
             modelBytes = msg["llm_bytes"] as? Int ?? modelBytes
             overheadBytes = msg["overhead_bytes"] as? Int ?? overheadBytes
@@ -331,6 +337,20 @@ final class ChatModel: ObservableObject {
 
     /// Remove the downloaded image weights.
     func deleteImageModel() { client.send(Wire.encode("image_delete")) }
+
+    /// Look a pasted repo over without downloading it.
+    func probeModel(_ id: String) {
+        probing = true
+        probe = [:]
+        client.send(Wire.encode("model_probe", ["id": id]))
+    }
+
+    /// Keep it, if the check was clean.
+    func addModel(_ id: String) {
+        probing = false
+        probe = [:]
+        client.send(Wire.encode("model_add", ["id": id]))
+    }
 
     func unloadModel() {
         client.send(Wire.encode("model_unload"))

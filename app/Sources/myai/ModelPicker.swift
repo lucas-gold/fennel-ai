@@ -21,19 +21,14 @@ struct ModelPicker: View {
     /// to undo, so it asks first — and asks in place, because a sheet over a
     /// list this small hides the thing being talked about.
     @State private var confirmingDelete: String?
-    /// Option-click the heading to show models marked hidden. Session-only on
-    /// purpose: it resets every time the picker opens, so the default view
-    /// stays the default view.
-    @State private var revealHidden = false
+    /// A Hugging Face path the user is considering.
+    @State private var customPath = ""
 
     var body: some View {
         VStack(spacing: 14) {
             VStack(spacing: 4) {
                 Text("Choose a Fennel model")
                     .font(Theme.title(17, .semibold))
-                    .gesture(TapGesture().modifiers(.option).onEnded {
-                        revealHidden.toggle()
-                    })
                 Text(ramLine)
                     .font(.system(size: 11.5).monospacedDigit())
                     .foregroundStyle(.secondary)
@@ -50,7 +45,7 @@ struct ModelPicker: View {
 
             ScrollView {
                 VStack(spacing: 8) {
-                    ForEach(visibleModels) { m in
+                    ForEach(chat.setupModels) { m in
                         row(m)
                     }
                 }
@@ -58,6 +53,8 @@ struct ModelPicker: View {
             }
             .scrollIndicators(.automatic)
             .frame(maxHeight: 390)
+
+            customField
 
             confirmBar
 
@@ -82,16 +79,6 @@ struct ModelPicker: View {
         }
         .padding(.horizontal, 22)
         .padding(.bottom, 10)
-    }
-
-    /// Hidden rows stay out of the way until Option-clicked — except when one
-    /// is already loaded or was the last choice, since a picker that omits the
-    /// model you are running would be lying.
-    private var visibleModels: [ModelOption] {
-        chat.setupModels.filter {
-            revealHidden || !$0.hidden
-                || $0.id == chat.loadedModelID || $0.id == chat.setupCurrent
-        }
     }
 
     /// Measured, not advertised: the free figure is what decides whether the
@@ -164,6 +151,72 @@ struct ModelPicker: View {
         return "\(size)  ·  \(lo)–\(hi) GB in memory during image generation only"
     }
 
+    /// Paste any MLX model from Hugging Face. Checked before it is kept —
+    /// config and chat template are a few kilobytes, and everything that goes
+    /// wrong with an unfamiliar model is visible in them.
+    @ViewBuilder private var customField: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack(spacing: 6) {
+                TextField("Add any MLX model — owner/model-name", text: $customPath)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 11))
+                    .padding(.horizontal, 9).padding(.vertical, 5)
+                    .background(RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(Theme.bubble))
+                    .onSubmit { check() }
+                Button(chat.probing ? "Checking…" : "Check") { check() }
+                    .font(.system(size: 11))
+                    .disabled(customPath.trimmingCharacters(in: .whitespaces).isEmpty
+                              || chat.probing)
+            }
+            probeVerdict
+        }
+        .padding(.top, 2)
+    }
+
+    private func check() {
+        let path = customPath.trimmingCharacters(in: .whitespaces)
+        guard !path.isEmpty else { return }
+        chat.probeModel(path)
+    }
+
+    @ViewBuilder private var probeVerdict: some View {
+        let p = chat.probe
+        if !p.isEmpty {
+            let problems = p["problems"] as? [String] ?? []
+            let warnings = p["warnings"] as? [String] ?? []
+            let ok = p["ok"] as? Bool ?? false
+            VStack(alignment: .leading, spacing: 3) {
+                ForEach(problems, id: \.self) { t in
+                    Label(t, systemImage: "xmark.circle.fill")
+                        .foregroundStyle(Color.red)
+                }
+                ForEach(warnings, id: \.self) { t in
+                    Label(t, systemImage: "exclamationmark.triangle.fill")
+                        .foregroundStyle(Color.orange)
+                }
+                if ok { addRow(p) }
+            }
+            .font(.system(size: 10))
+            .buttonStyle(.plain)
+            .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private func addRow(_ p: [String: Any]) -> some View {
+        let detail = p["detail"] as? String ?? ""
+        let size = ModelOption.gb(p["bytes"] as? Int ?? 0)
+        return HStack(spacing: 8) {
+            Label("\(detail) · \(size)", systemImage: "checkmark.circle.fill")
+                .foregroundStyle(Color.green)
+            Button("Add it") {
+                chat.addModel(p["id"] as? String ?? "")
+                customPath = ""
+            }
+            .font(.system(size: 10, weight: .semibold))
+        }
+    }
+
     private func row(_ m: ModelOption) -> some View {
         Button { pending = m.id; confirmingDelete = nil } label: { rowBody(m) }
             .buttonStyle(.plain)
@@ -219,12 +272,16 @@ struct ModelPicker: View {
         HStack(alignment: .top, spacing: 12) {
             VStack(alignment: .leading, spacing: 4) {
                 titleLine(m)
-                Text(m.focus)
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
-                    .lineSpacing(2)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .multilineTextAlignment(.leading)
+                // A custom row has no description — nobody wrote one — so it
+                // simply omits the line rather than leaving a gap.
+                if !m.focus.isEmpty {
+                    Text(m.focus)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                        .lineSpacing(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .multilineTextAlignment(.leading)
+                }
                 metaLine(m)
             }
             Spacer(minLength: 0)
