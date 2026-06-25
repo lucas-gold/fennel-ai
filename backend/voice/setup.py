@@ -48,10 +48,32 @@ _LLM_PATTERNS = ["*.json", "*.jinja", "*.txt", "*.py",
                  "model*.safetensors", "tokenizer.model"]
 
 
+def _llm_bytes() -> int:
+    """How big the chosen language model is, for the progress bar.
+
+    The registry first, then anything the user added by hand — the probe
+    measured that one — and only then the generic constant. A fixed 2.3 GB
+    scaled the bar to the wrong total for every model but one: it stalled short
+    of the end on a bigger model and sat at 100% through the rest of a smaller
+    one's download.
+    """
+    known = config.model_info(config.LLM_MODEL).get("bytes")
+    if known:
+        return known
+    for row in custom_models():
+        if row["id"] == config.LLM_MODEL and row.get("bytes"):
+            return int(row["bytes"])
+    return _SIZES["llm"]
+
+
 def _repos() -> list[tuple[str, str, int, Optional[list]]]:
     """(key, repo_id, approx_bytes, allow_patterns) for everything Fennel needs."""
     return [
-        ("llm", config.LLM_MODEL, _SIZES["llm"], _LLM_PATTERNS),
+        # The language model's size comes from the registry, not the constant:
+        # a fixed 2.3 GB meant the bar was scaled to the wrong total for every
+        # model but one — stalling short of the end on a bigger model and
+        # sitting at 100% for the rest of a smaller one's download.
+        ("llm", config.LLM_MODEL, _llm_bytes(), _LLM_PATTERNS),
         ("stt", config.STT_MODEL, _SIZES["stt"], None),
         ("tts", config.TTS_MODEL, _SIZES["tts"], None),
         ("embed", config.EMBED_MODEL, _SIZES["embed"], None),
