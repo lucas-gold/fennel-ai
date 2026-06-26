@@ -574,8 +574,10 @@ def _picker_fields() -> dict:
             "bytes": image_gen.MODEL_BYTES,
             "installed": image_gen.installed(),
             "enabled": (_store.setting("images", "1") or "1") == "1",
-            # Measured with mflux's own reporting at 768px in low-RAM mode.
-            "peak_bytes": image_gen.PEAK_LOWRAM_BYTES,
+            # Both measured. Which one applies depends on free memory at the
+            # time, so the card quotes the range rather than picking one.
+            "peak_bytes": image_gen.PEAK_FULL_BYTES,
+            "peak_low_bytes": image_gen.PEAK_LOWRAM_BYTES,
         },
         "overhead_bytes": overhead,
         "llm_bytes": _llm_bytes,
