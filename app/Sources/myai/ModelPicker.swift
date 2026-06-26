@@ -368,10 +368,14 @@ struct ModelPicker: View {
                 .font(.system(size: 13))
                 .foregroundStyle(m.id == (pending ?? chat.setupCurrent)
                                  ? Theme.accentSolid : Color.secondary.opacity(0.4))
-            if m.installed {
+            // A model added by hand can always be taken off the list; a listed
+            // one only once there is something on disk to remove. Without this
+            // a custom row that failed to download, or had not been downloaded
+            // yet, was stuck there for good.
+            if m.installed || m.custom {
                 if confirmingDelete == m.id {
                     HStack(spacing: 4) {
-                        Button("Delete") {
+                        Button(m.installed ? "Delete" : "Remove") {
                             chat.deleteModel(m.id)
                             confirmingDelete = nil
                         }
@@ -391,7 +395,7 @@ struct ModelPicker: View {
                             .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
-                    .help("Delete this download")
+                    .help(m.installed ? "Delete this download" : "Remove from the list")
                 }
             }
         }
