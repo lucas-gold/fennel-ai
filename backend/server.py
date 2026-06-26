@@ -492,12 +492,21 @@ async def _switch_model() -> None:
     await _model_chosen.wait()
     pick = _chosen_model or was
 
-    if pick == was and _llm is not None:
+    # Keeping the same model is free — unless something else still has to be
+    # fetched. Choosing an already-loaded model with image generation newly
+    # switched on used to return straight to the chat, skipping the download
+    # entirely, and the first picture then paid for it.
+    images_pending = ((_store.setting("images", "1") or "1") == "1"
+                      and not image_gen.installed())
+    if pick == was and _llm is not None and not images_pending:
         print("[setup] same model kept; nothing reloaded", flush=True)
         _set_setup(phase="ready")
         return
 
-    print(f"[setup] switching to {config.model_info(pick)['name']}", flush=True)
+    if pick == was:
+        print("[setup] same model, but there is downloading to do", flush=True)
+    else:
+        print(f"[setup] switching to {config.model_info(pick)['name']}", flush=True)
     config.LLM_MODEL = pick
     _store.set_setting("llm_model", pick)
     _set_setup(phase="loading",
@@ -645,14 +654,14 @@ async def _load_everything(chosen: dict) -> None:
         _check_cancel()
         size = model_setup.human(image_gen.MODEL_BYTES)
         _set_setup(phase="downloading", progress=0.0, size=size,
-                   detail="Downloading image generation model")
+                   detail="Downloading Image generation model")
         loop = asyncio.get_running_loop()
 
         def img_report(done: int, total: int) -> None:
             loop.call_soon_threadsafe(partial(
                 _set_setup, phase="downloading", size=size,
                 progress=min(1.0, done / total) if total else 0.0,
-                detail=f"Downloading image generation model — "
+                detail=f"Downloading Image generation model — "
                        f"{model_setup.human(done)} of {model_setup.human(total)}"))
 
         try:
@@ -678,7 +687,7 @@ async def _load_everything(chosen: dict) -> None:
             # arguments only.
             loop.call_soon_threadsafe(partial(
                 _set_setup, phase="downloading", progress=frac, size=size,
-                detail=f"Downloading the {what} — "
+                detail=f"Downloading {what} — "
                        f"{model_setup.human(done)} of {model_setup.human(total)}"))
 
         try:
