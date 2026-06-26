@@ -36,12 +36,12 @@ MODEL_BYTES = 4_620_000_000
 #: allocations which never coexist as resident pages. Sizing the decision below
 #: on it made Fennel unload the language model when there was ample room.
 #: 768px in low-RAM mode.
-PEAK_LOWRAM_BYTES = 3_200_000_000
+PEAK_LOWRAM_BYTES = 4_200_000_000
 #: 1024px at full tilt — also measured, after an estimate of 5.0 GB scaled from
 #: mflux's own reporting turned out to be barely half the real figure. That
 #: estimate had generation choosing full size with about two gigabytes less
 #: headroom than it needed.
-PEAK_FULL_BYTES = 8_800_000_000
+PEAK_FULL_BYTES = 6_800_000_000
 
 _STEP = re.compile(r"(\d+)/(\d+)\s*\[")
 
