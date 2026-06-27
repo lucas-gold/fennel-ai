@@ -163,10 +163,17 @@ def probe(repo: str) -> dict:
     problems: list[str] = []
     warnings: list[str] = []
 
+    # Resolve the type the way mlx-lm does before deciding it is unsupported.
+    # Several families are served by another family's implementation — Mistral
+    # by llama.py, for one — so checking the filenames alone declared working
+    # models unsupported.
+    from mlx_lm.utils import MODEL_REMAPPING
+
     supported = {p.stem for p in
                  pathlib.Path(mlx_lm.__file__).parent.joinpath("models").glob("*.py")}
     mtype = cfg.get("model_type", "")
-    if mtype not in supported:
+    resolved = MODEL_REMAPPING.get(mtype, mtype)
+    if resolved not in supported:
         problems.append(f"mlx-lm has no support for '{mtype}' models.")
 
     quant = cfg.get("quantization") or cfg.get("quantization_config") or {}
