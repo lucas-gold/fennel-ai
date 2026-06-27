@@ -268,9 +268,10 @@ async def handler(ws) -> None:
                     # Deleting is allowed while the picker is up because nothing
                     # is loaded yet; once a model is in memory it is protected.
                     try:
+                        await _release_if_resident(str(m.get("id", "")))
                         model_setup.delete(
                             str(m.get("id", "")),
-                            in_use=config.LLM_MODEL if _ready.is_set() else None)
+                            in_use=_resident_model())
                         model_setup.forget_custom(str(m.get("id", "")))
                         note = ""
                     except Exception as exc:
@@ -367,8 +368,9 @@ async def handler(ws) -> None:
                                current=config.LLM_MODEL, note=note)
                 elif msg["type"] == "model_delete":
                     try:
+                        await _release_if_resident(str(msg.get("id", "")))
                         model_setup.delete(str(msg.get("id", "")),
-                                           in_use=config.LLM_MODEL)
+                                           in_use=_resident_model())
                         model_setup.forget_custom(str(msg.get("id", "")))
                         note = ""
                     except Exception as exc:
@@ -613,6 +615,31 @@ async def _choose_and_load(already_chosen: bool = False) -> None:
             force_picker = True
             continue
         break
+
+
+async def _release_if_resident(repo: str) -> None:
+    """Unload `repo` if it is the model in memory, so it can be deleted.
+
+    The picker deliberately keeps the running model loaded, so that returning
+    to it costs nothing — which also made it permanently undeletable: it was
+    always "the one in use". Asking to delete it is a clear enough statement of
+    intent to unload it first.
+    """
+    if repo and _llm is not None and repo == config.LLM_MODEL:
+        print(f"[setup] releasing {repo} so it can be deleted", flush=True)
+        await _drop_llm()
+
+
+def _resident_model() -> Optional[str]:
+    """The model that is actually in memory, or None.
+
+    What delete has to protect is weights in use, not a stored preference. The
+    two delete paths disagreed about this — one asked whether setup had
+    finished, the other assumed the current model was always live — so removing
+    the model you had just downloaded was refused from the picker, where nothing
+    is loaded at all.
+    """
+    return config.LLM_MODEL if _llm is not None else None
 
 
 def _picker_fields() -> dict:
