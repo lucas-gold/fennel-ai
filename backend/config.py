@@ -50,9 +50,6 @@ MAX_TOKENS = 1024 if TIER == "large" else 512
 # largely as-is. What Fennel costs *besides* the model is measured at runtime and
 # stated once in the picker's header, rather than added into every row, which
 # counted it seven times over.
-# `hidden` keeps a model off the picker until it is asked for (Option-click the
-# heading). Nothing secret — it is on the wire like any other row — just not the
-# first thing a visitor sees.
 MODELS: list[dict] = [
     {"id": "mlx-community/Llama-3.2-3B-Instruct-4bit",
      "name": "Light", "detail": "Llama 3.2 · 3B",
@@ -85,10 +82,6 @@ MODELS: list[dict] = [
               "and search, and the best at multi-step requests. The largest "
               "here: fine on 24 GB, tight on 16 GB.",
      "bytes": 8_320_000_000, "tools": True},
-    {"id": "alexgusevski/Impish_Nemo_12B-mlx-4Bit",
-     "name": "Unfiltered", "detail": "Impish Nemo · 12B",
-     "focus": "The least restrained of the set, for fiction and roleplay.",
-     "bytes": 6_910_000_000, "tools": False, "hidden": True},
 ]
 
 # What Fennel costs besides the language model — Whisper, Kokoro, the embedder
@@ -112,7 +105,7 @@ def model_info(repo: str) -> dict:
             return m
     return {"id": repo, "name": repo.split("/")[-1], "detail": "",
             "focus": "Set by hand in config.py.", "bytes": 0,
-            "tools": True, "hidden": False}
+            "tools": True}
 
 
 def local_models() -> str:

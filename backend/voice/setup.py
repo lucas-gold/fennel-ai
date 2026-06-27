@@ -15,6 +15,11 @@ import os
 import threading
 from typing import Callable, Optional
 
+#: A template that renders tools mentions the variable it is given them in.
+#: Checking for Fennel's own tool names instead was wrong — a template never
+#: contains those, it loops over whatever it is handed.
+_TOOL_MARKERS = ("tools", "tool_call")
+
 from huggingface_hub import scan_cache_dir, snapshot_download
 
 import config
@@ -31,13 +36,25 @@ _SIZES = {
 Progress = Callable[[str, int, int], None]   # (what, done_bytes, total_bytes)
 
 
-def _repos() -> list[tuple[str, str, int]]:
-    """(key, repo_id, approx_bytes) for everything Fennel needs to run."""
+#: What to fetch for the language model, and nothing else.
+#:
+#: Some repos ship every quantisation in one tree — 2-bit, 4-bit, 6-bit and
+#: 8-bit side by side — and an unrestricted snapshot_download takes all of them:
+#: 94.7 GB to use 16. fnmatch anchors at the start of the path, so
+#: "model*.safetensors" matches the weights at the root and not "8-bit/model…".
+#: Only the language model is restricted; the other three are single-quant and
+#: keep their weights under names these patterns would miss.
+_LLM_PATTERNS = ["*.json", "*.jinja", "*.txt", "*.py",
+                 "model*.safetensors", "tokenizer.model"]
+
+
+def _repos() -> list[tuple[str, str, int, Optional[list]]]:
+    """(key, repo_id, approx_bytes, allow_patterns) for everything Fennel needs."""
     return [
-        ("llm", config.LLM_MODEL, _SIZES["llm"]),
-        ("stt", config.STT_MODEL, _SIZES["stt"]),
-        ("tts", config.TTS_MODEL, _SIZES["tts"]),
-        ("embed", config.EMBED_MODEL, _SIZES["embed"]),
+        ("llm", config.LLM_MODEL, _SIZES["llm"], _LLM_PATTERNS),
+        ("stt", config.STT_MODEL, _SIZES["stt"], None),
+        ("tts", config.TTS_MODEL, _SIZES["tts"], None),
+        ("embed", config.EMBED_MODEL, _SIZES["embed"], None),
     ]
 
 
@@ -70,6 +87,148 @@ def _weights_on_disk() -> dict[str, int]:
     return out
 
 
+#: Models the user pasted in themselves, kept in the settings table so they
+#: survive a restart. Stored as the repo id plus whatever the probe learned, so
+#: the picker can describe a custom row without going back to the network.
+_CUSTOM_KEY = "custom_models"
+
+
+def _store():
+    from voice.store import Store
+    return Store()
+
+
+def custom_models() -> list[dict]:
+    import json as _json
+    try:
+        rows = _json.loads(_store().setting(_CUSTOM_KEY, "") or "[]")
+    except Exception:
+        return []
+    return [r for r in rows if isinstance(r, dict) and r.get("id")]
+
+
+def add_custom(row: dict) -> None:
+    import json as _json
+    rows = [r for r in custom_models() if r["id"] != row["id"]]
+    rows.append(row)
+    _store().set_setting(_CUSTOM_KEY, _json.dumps(rows))
+
+
+def forget_custom(repo: str) -> None:
+    import json as _json
+    rows = [r for r in custom_models() if r["id"] != repo]
+    _store().set_setting(_CUSTOM_KEY, _json.dumps(rows))
+
+
+def probe(repo: str) -> dict:
+    """Look a repo over before committing to it.
+
+    Everything that goes wrong with an unfamiliar model is visible in its
+    config and its chat template — a few kilobytes — so it is worth reading
+    them before a five-gigabyte download rather than after. Reports findings
+    rather than refusing: the user can proceed knowing what is wrong.
+    """
+    import json as _json
+    import pathlib
+    import urllib.request
+
+    import mlx_lm
+
+    repo = repo.strip().strip("/")
+    if repo.startswith("http"):
+        repo = "/".join(repo.split("huggingface.co/")[-1].split("/")[:2])
+    if repo.count("/") != 1:
+        return {"ok": False, "id": repo,
+                "problems": ["That is not a Hugging Face path — it should look "
+                             "like owner/model-name."]}
+
+    def fetch(name: str) -> str:
+        try:
+            with urllib.request.urlopen(
+                    f"https://huggingface.co/{repo}/raw/main/{name}", timeout=20) as r:
+                return r.read().decode()
+        except Exception:
+            return ""
+
+    raw_cfg = fetch("config.json")
+    if not raw_cfg:
+        return {"ok": False, "id": repo,
+                "problems": ["No config.json there — check the path, or the "
+                             "model may be private or gated."]}
+    try:
+        cfg = _json.loads(raw_cfg)
+    except Exception:
+        return {"ok": False, "id": repo, "problems": ["Its config.json is unreadable."]}
+
+    problems: list[str] = []
+    warnings: list[str] = []
+
+    supported = {p.stem for p in
+                 pathlib.Path(mlx_lm.__file__).parent.joinpath("models").glob("*.py")}
+    mtype = cfg.get("model_type", "")
+    if mtype not in supported:
+        problems.append(f"mlx-lm has no support for '{mtype}' models.")
+
+    quant = cfg.get("quantization") or cfg.get("quantization_config") or {}
+    bits = quant.get("bits")
+    if not quant:
+        warnings.append("Not quantised — it will be much larger than a 4-bit build.")
+
+    tpl = fetch("chat_template.jinja") or fetch("tokenizer_config.json")
+    if "chat_template" not in tpl and "im_start" not in tpl and "message" not in tpl:
+        problems.append("No chat template, so there is no way to hold a "
+                        "conversation with it.")
+    if "<think>" in tpl:
+        warnings.append("It reasons before answering, which the voice loop "
+                        "cannot afford; Fennel will suppress it where it can.")
+    tools = sum(1 for marker in _TOOL_MARKERS if marker in tpl)
+    if not tools:
+        warnings.append("Its template ignores tool definitions — reminders, "
+                        "timers, the agenda and search will not work.")
+
+    size, subdirs = _repo_size(repo)
+    if subdirs:
+        warnings.append(f"Ships several builds in one repo ({', '.join(subdirs[:4])}); "
+                        "only the top-level weights are fetched.")
+
+    return {
+        "ok": not problems,
+        "id": repo,
+        "name": repo.split("/")[-1],
+        "detail": (f"{mtype} · {bits}-bit" if bits else mtype),
+        "bytes": size,
+        "tools": bool(tools),
+        "problems": problems,
+        "warnings": warnings,
+    }
+
+
+def _repo_size(repo: str) -> tuple[int, list]:
+    """Bytes of top-level weights, and any quantisation subfolders."""
+    import json as _json
+    import urllib.request
+    try:
+        with urllib.request.urlopen(
+                f"https://huggingface.co/api/models/{repo}/tree/main?recursive=true",
+                timeout=20) as r:
+            tree = _json.load(r)
+    except Exception:
+        return 0, []
+    total = 0
+    subdirs = set()
+    for f in tree:
+        if f.get("type") != "file":
+            continue
+        path = f["path"]
+        size = (f.get("lfs") or {}).get("size") or f.get("size", 0)
+        if "/" in path:
+            if path.endswith((".safetensors", ".npz", ".bin")):
+                subdirs.add(path.split("/")[0])
+            continue
+        total += size
+    return total, sorted(subdirs)
+
+
 def installed(repo: str) -> bool:
     """Whether `repo` is genuinely usable offline, weights and all."""
     return repo in _weights_on_disk()
@@ -79,8 +238,13 @@ def catalogue() -> list[dict]:
     """The registry, annotated with what is on disk. Everything the startup
     picker needs, resolved here so the app holds no model knowledge of its own."""
     have = _weights_on_disk()
-    return [dict({"hidden": False}, **m, installed=m["id"] in have,
-                 on_disk=have.get(m["id"], 0)) for m in config.MODELS]
+    rows = [dict(m, installed=m["id"] in have, on_disk=have.get(m["id"], 0),
+                 custom=False) for m in config.MODELS]
+    # Anything the user added by hand goes after the curated list, in the order
+    # they were added.
+    rows += [dict(m, installed=m["id"] in have, on_disk=have.get(m["id"], 0),
+                  custom=True) for m in custom_models()]
+    return rows
 
 
 def delete(repo: str, in_use: Optional[str] = None) -> int:
@@ -91,7 +255,8 @@ def delete(repo: str, in_use: Optional[str] = None) -> int:
     that can brick the next launch. Before anything is loaded there is no such
     model, so during the startup picker every row is fair game.
     """
-    if repo not in {m["id"] for m in config.MODELS}:
+    known = {m["id"] for m in config.MODELS} | {m["id"] for m in custom_models()}
+    if repo not in known:
         raise ValueError(f"not a known model: {repo}")
     if in_use and repo == in_use:
         raise ValueError("that model is the one in use")
@@ -125,11 +290,11 @@ def missing() -> list[tuple[str, str, int]]:
     fetched later, at load time, without ever passing the consent screen.
     """
     have = _weights_on_disk()
-    return [(k, r, n) for k, r, n in _repos() if r not in have]
+    return [(k, r, n, pat) for k, r, n, pat in _repos() if r not in have]
 
 
 def total_bytes(items: Optional[list] = None) -> int:
-    return sum(n for _, _, n in (items if items is not None else missing()))
+    return sum(n for _, _, n, _pat in (items if items is not None else missing()))
 
 
 def human(n: int) -> str:
@@ -185,13 +350,13 @@ def download(progress: Progress) -> None:
     watcher = threading.Thread(target=watch, daemon=True)
     watcher.start()
     try:
-        for key, repo, _approx in items:
+        for key, repo, _approx, patterns in items:
             label = {
                 "llm": f"{config.model_info(config.LLM_MODEL)['name']} model",
                 "stt": "speech recognition", "tts": "voice",
                 "embed": "memory"}.get(key, key)
             report_now()
-            snapshot_download(repo)
+            snapshot_download(repo, allow_patterns=patterns)
     finally:
         stop.set()
         watcher.join(timeout=2)
