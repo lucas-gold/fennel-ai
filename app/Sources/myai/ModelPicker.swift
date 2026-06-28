@@ -157,7 +157,8 @@ struct ModelPicker: View {
     @ViewBuilder private var customField: some View {
         VStack(alignment: .leading, spacing: 5) {
             HStack(spacing: 6) {
-                TextField("Add any MLX model — owner/model-name", text: $customPath)
+                TextField("Add an MLX model from Hugging Face — owner/model-name",
+                          text: $customPath)
                     .textFieldStyle(.plain)
                     .font(.system(size: 11))
                     .padding(.horizontal, 9).padding(.vertical, 5)
@@ -209,7 +210,7 @@ struct ModelPicker: View {
         return HStack(spacing: 8) {
             Label("\(detail) · \(size)", systemImage: "checkmark.circle.fill")
                 .foregroundStyle(Color.green)
-            Button("Add it") {
+            Button("Add to Fennel") {
                 chat.addModel(p["id"] as? String ?? "")
                 customPath = ""
             }
@@ -308,7 +309,12 @@ struct ModelPicker: View {
     @ViewBuilder private func titleLine(_ m: ModelOption) -> some View {
         HStack(spacing: 7) {
             Text(m.name).font(.system(size: 13.5, weight: .semibold))
-            Text(m.detail).font(.system(size: 11)).foregroundStyle(.secondary)
+            if m.custom {
+                // Already the repo path — there is nothing to expand to.
+                Text(m.detail).font(.system(size: 11)).foregroundStyle(.secondary)
+            } else {
+                ModelSourceLink(model: m)
+            }
             // "In use" means the weights are still resident — reopening the
             // picker does not unload them, so returning to the same model is
             // free. The x makes that untrue when the RAM is wanted back.
@@ -399,5 +405,32 @@ struct ModelPicker: View {
                 }
             }
         }
+    }
+}
+
+
+/// The model's short description, which becomes its full Hugging Face path on
+/// hover and opens that page when clicked.
+///
+/// No underline and no accent colour: it is a detail for the curious, and a
+/// picker where every second line is a link reads as a page of links.
+private struct ModelSourceLink: View {
+    let model: ModelOption
+    @State private var hovering = false
+
+    var body: some View {
+        Text(hovering ? model.id : model.detail)
+            .font(.system(size: 11))
+            .foregroundStyle(hovering ? Color.primary : Color.secondary)
+            .lineLimit(1)
+            .fixedSize()
+            .animation(.easeOut(duration: 0.15), value: hovering)
+            .onHover { hovering = $0 }
+            .onTapGesture {
+                if let url = URL(string: "https://huggingface.co/\(model.id)") {
+                    NSWorkspace.shared.open(url)
+                }
+            }
+            .help("Open on Hugging Face")
     }
 }

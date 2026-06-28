@@ -53,34 +53,39 @@ MAX_TOKENS = 1024 if TIER == "large" else 512
 MODELS: list[dict] = [
     {"id": "mlx-community/Llama-3.2-3B-Instruct-4bit",
      "name": "Light", "detail": "Llama 3.2 · 3B",
-     "focus": "The quickest to answer, and the smallest. Best on 16 GB, or "
-              "when you want replies to feel instant more than thorough.",
+     "focus": (
+      "Answers fastest. Suits 16 GB machines and quick "
+      "back-and-forth."),
      "bytes": 1_820_000_000, "tools": True},
     {"id": "mlx-community/Qwen3-4B-Instruct-2507-4bit",
      "name": "Everyday", "detail": "Qwen3 · 4B",
-     "focus": "The default, and the one the persona and tools were tuned "
-              "against. A good balance of speed and sense.",
+     "focus": (
+      "The default. Balanced speed and judgement, and the model "
+      "Fennel's tools were tuned against."),
      "bytes": 2_280_000_000, "tools": True},
     {"id": "mlx-community/Qwen2.5-Coder-7B-Instruct-4bit",
      "name": "Code", "detail": "Qwen2.5 Coder · 7B",
-     "focus": "Trained on code. Choose it for programming questions, shell "
-              "commands and config files; it is plainer company than the rest.",
+     "focus": (
+      "Built for programming. Best on code, shell commands and "
+      "configuration."),
      "bytes": 4_300_000_000, "tools": True},
     {"id": "mlx-community/Qwen3-8B-4bit",
      "name": "Balanced", "detail": "Qwen3 · 8B",
-     "focus": "Noticeably better at reasoning and long questions than "
-              "Everyday, and noticeably slower. Comfortable on 24 GB.",
+     "focus": (
+      "Stronger reasoning on longer questions. Slower than Everyday, "
+      "comfortable on 24 GB."),
      "bytes": 4_620_000_000, "tools": True},
     {"id": "ailexleon/Rocinante-X-12B-v1-mlx-4Bit",
      "name": "Creative", "detail": "Rocinante X · 12B",
-     "focus": "Tuned for prose and character writing, and far less likely to "
-              "refuse. Warmer and looser; not the one for facts.",
+     "focus": (
+      "Made for prose and character writing. Warm and discursive, "
+      "less reliable on facts."),
      "bytes": 6_910_000_000, "tools": True},
     {"id": "mlx-community/Hermes-4-14B-4bit",
      "name": "Agent", "detail": "Hermes 4 · 14B",
-     "focus": "Built around tool use — the steadiest at reminders, calendar "
-              "and search, and the best at multi-step requests. The largest "
-              "here: fine on 24 GB, tight on 16 GB.",
+     "focus": (
+      "Built for tool use. The most dependable with reminders, "
+      "calendar, search and multi-step requests."),
      "bytes": 8_320_000_000, "tools": True},
 ]
 
