@@ -84,7 +84,7 @@ private struct FirstRunOverlay: View {
         case "needs_consent":
             VStack(spacing: 12) {
                 Text("One-time setup").font(Theme.title(16, .semibold))
-                Text("Fennel needs to download the models it runs on — about \(chat.setupSize). This is the only time it uses the internet unless you turn on daily updates or Wikipedia lookups.")
+                Text("Fennel needs to download the models it runs on — about \(chat.setupSize). This only happens once.")
                     .font(.system(size: 12))
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)

@@ -553,7 +553,7 @@ async def _switch_model() -> None:
     # Same loop as first boot, so Cancel behaves identically here: it drops the
     # half-loaded model and puts the picker back, rather than leaving the app
     # with no model at all.
-    await _choose_and_load()
+    await _choose_and_load(already_chosen=True)
     for sess in list(_sessions):
         sess.rebind_llm(_llm)
 
@@ -563,23 +563,30 @@ async def _prepare_models() -> None:
     await _choose_and_load()
 
 
-async def _choose_and_load() -> None:
+async def _choose_and_load(already_chosen: bool = False) -> None:
     """Settle on a model and load it, returning to the picker if cancelled.
 
     Shared by first boot and by switching from the chat, so Cancel behaves the
     same in both: it drops whatever had loaded and puts the picker back, rather
     than leaving the app running with no model at all.
 
-    The picker is skipped when last launch's model is still on disk — it is
-    reachable from the chat, so passing through it every launch was a toll
-    rather than a choice.
+    `already_chosen` says the user has just picked and must not be asked again.
+    Without it the loop treated "not on disk yet" as "still needs choosing", so
+    choosing a model that had to be downloaded bounced straight back to the
+    picker instead of downloading it.
+
+    On first boot nobody has chosen, and the picker is skipped only when last
+    launch's model is still on disk — it is reachable from the chat, so passing
+    through it every launch was a toll rather than a choice.
     """
     global _chosen_model
     force_picker = False
     while True:
         stored = config.LLM_MODEL if force_picker else (
             _store.setting("llm_model", "") or config.DEFAULT_MODEL)
-        if not force_picker and model_setup.installed(stored):
+        if already_chosen and not force_picker:
+            config.LLM_MODEL = stored
+        elif not force_picker and model_setup.installed(stored):
             config.LLM_MODEL = stored
         else:
             _model_chosen.clear()
@@ -600,6 +607,7 @@ async def _choose_and_load() -> None:
             await _load_everything(chosen)
         except _Cancelled:
             print("[setup] load cancelled; back to the picker", flush=True)
+            already_chosen = False
             _set_setup(phase="loading", detail="Cancelling…", loaded="")
             await _drop_llm()
             force_picker = True
