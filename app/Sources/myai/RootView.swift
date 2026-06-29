@@ -129,18 +129,23 @@ private struct FirstRunOverlay: View {
 
         case "downloading":
             VStack(spacing: 12) {
-                Text("Downloading \(chat.modelName.isEmpty ? "models" : chat.modelName) Model")
+                Text("Downloading \(chat.modelName.isEmpty ? "" : chat.modelName) Model")
                     .font(Theme.title(16, .semibold))
                 VStack(spacing: 6) {
                     ProgressView(value: chat.setupProgress)
                         .progressViewStyle(.linear)
                         .frame(width: 340)
-                    HStack {
+                    HStack(alignment: .firstTextBaseline) {
+                        // Two lines, not one: a long repo name plus the running
+                        // total does not fit the bar's width, and the size was
+                        // what got cut — the one part that changes.
                         Text(chat.setupDetail.isEmpty ? "Starting…" : chat.setupDetail)
                             .font(.system(size: 11)).foregroundStyle(.secondary)
                             .monospacedDigit()
-                            .lineLimit(1)
-                        Spacer(minLength: 12)
+                            .lineLimit(2)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .multilineTextAlignment(.leading)
+                        Spacer(minLength: 10)
                         // The percentage, plainly. A bar alone gives no sense of
                         // whether a multi-gigabyte download is worth waiting out.
                         Text("\(Int(chat.setupProgress * 100))%")
