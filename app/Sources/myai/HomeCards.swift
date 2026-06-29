@@ -440,7 +440,11 @@ struct HomeCardView: View {
     @ViewBuilder private var statusLine: some View {
         switch card.status {
         case .working:
-            Text("Adding…").font(.caption2).foregroundStyle(.secondary)
+            // A picture has its own progress line above; "Adding…" belonged to
+            // reminders and read as nonsense under a half-drawn image.
+            if card.kind != .image {
+                Text("Adding…").font(.caption2).foregroundStyle(.secondary)
+            }
         case .done, .deleted:
             EmptyView()
         case .failed(let why):

@@ -258,21 +258,50 @@ def _repo_size(repo: str) -> tuple[int, list]:
     return total, sorted(subdirs)
 
 
+#: How much of a model's expected weight has to be present before it counts as
+#: downloaded. Not 100%: the patterns above skip files the published size
+#: includes, so a complete fetch lands a little short of the repo's own total.
+_COMPLETE_ENOUGH = 0.75
+
+
+def complete(repo: str, expected: int, on_disk: Optional[int] = None) -> bool:
+    """Whether enough of `repo` is on disk to call it downloaded.
+
+    Presence of any weight file is not enough. An interrupted download leaves
+    real files behind, and treating those as a finished model meant the picker
+    skipped fetching the rest — so the first request for a picture paid for it
+    instead, mid-conversation, which is exactly what downloading at selection
+    was meant to prevent.
+    """
+    if on_disk is None:
+        on_disk = _weights_on_disk().get(repo, 0)
+    if not on_disk:
+        return False
+    if expected <= 0:
+        return True          # nothing to compare against; presence must do
+    return on_disk >= expected * _COMPLETE_ENOUGH
+
+
 def installed(repo: str) -> bool:
     """Whether `repo` is genuinely usable offline, weights and all."""
-    return repo in _weights_on_disk()
+    expected = 0
+    for row in list(config.MODELS) + custom_models():
+        if row["id"] == repo:
+            expected = row.get("bytes", 0)
+            break
+    return complete(repo, expected)
 
 
 def catalogue() -> list[dict]:
     """The registry, annotated with what is on disk. Everything the startup
     picker needs, resolved here so the app holds no model knowledge of its own."""
     have = _weights_on_disk()
-    rows = [dict(m, installed=m["id"] in have, on_disk=have.get(m["id"], 0),
-                 custom=False) for m in config.MODELS]
+    rows = [dict(m, installed=complete(m["id"], m.get("bytes", 0), have.get(m["id"], 0)),
+                 on_disk=have.get(m["id"], 0), custom=False) for m in config.MODELS]
     # Anything the user added by hand goes after the curated list, in the order
     # they were added.
-    rows += [dict(m, installed=m["id"] in have, on_disk=have.get(m["id"], 0),
-                  custom=True) for m in custom_models()]
+    rows += [dict(m, installed=complete(m["id"], m.get("bytes", 0), have.get(m["id"], 0)),
+                  on_disk=have.get(m["id"], 0), custom=True) for m in custom_models()]
     return rows
 
 
@@ -319,7 +348,8 @@ def missing() -> list[tuple[str, str, int]]:
     fetched later, at load time, without ever passing the consent screen.
     """
     have = _weights_on_disk()
-    return [(k, r, n, pat) for k, r, n, pat in _repos() if r not in have]
+    return [(k, r, n, pat) for k, r, n, pat in _repos()
+            if not complete(r, n, have.get(r, 0))]
 
 
 def total_bytes(items: Optional[list] = None) -> int:
