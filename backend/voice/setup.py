@@ -261,7 +261,9 @@ def _repo_size(repo: str) -> tuple[int, list]:
 #: How much of a model's expected weight has to be present before it counts as
 #: downloaded. Not 100%: the patterns above skip files the published size
 #: includes, so a complete fetch lands a little short of the repo's own total.
-_COMPLETE_ENOUGH = 0.75
+#: A finished download measures ~99% of the published total (Everyday: 2.26
+#: of 2.28 GB), so this is generous rather than tight.
+_COMPLETE_ENOUGH = 0.9
 
 
 def complete(repo: str, expected: int, on_disk: Optional[int] = None) -> bool:
@@ -379,6 +381,25 @@ def _cache_bytes() -> int:
     return total
 
 
+#: Repos whose cache has already been cleared and re-fetched this session, so a
+#: model that is simply smaller than its published size cannot be wiped and
+#: re-downloaded on a loop.
+_repaired: set = set()
+
+
+def _clear_repo(repo: str) -> None:
+    """Drop a repo from the hub cache so the next download starts clean."""
+    try:
+        cache = scan_cache_dir()
+        hashes = [r.commit_hash for c in cache.repos if c.repo_id == repo
+                  for r in c.revisions]
+        if hashes:
+            cache.delete_revisions(*hashes).execute()
+            print(f"[setup] cleared a partial download of {repo}", flush=True)
+    except Exception as exc:
+        print(f"[setup] couldn't clear {repo}: {exc}", flush=True)
+
+
 def download(progress: Progress) -> None:
     """Fetch every missing model, reporting bytes as they land.
 
@@ -410,6 +431,17 @@ def download(progress: Progress) -> None:
     watcher.start()
     try:
         for key, repo, _approx, patterns in items:
+            # An interrupted download leaves a file that the hub believes is
+            # finished — it trusts its own metadata rather than the size on
+            # disk, so asking again returns instantly and repairs nothing. The
+            # only way to complete it is to throw the partial away first. Once
+            # per session, so a model that is merely smaller than its published
+            # total cannot be wiped and re-fetched forever.
+            on_disk = _weights_on_disk().get(repo, 0)
+            if on_disk and not complete(repo, _approx, on_disk) \
+                    and repo not in _repaired:
+                _repaired.add(repo)
+                _clear_repo(repo)
             label = {
                 "llm": f"{config.model_info(config.LLM_MODEL)['name']} model",
                 "stt": "speech recognition", "tts": "voice",
