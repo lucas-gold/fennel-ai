@@ -51,12 +51,12 @@ MAX_TOKENS = 1024 if TIER == "large" else 512
 # stated once in the picker's header, rather than added into every row, which
 # counted it seven times over.
 MODELS: list[dict] = [
-    {"id": "mlx-community/Llama-3.2-3B-Instruct-4bit",
-     "name": "Light", "detail": "Llama 3.2 · 3B",
+    {"id": "mlx-community/Qwen3-1.7B-4bit",
+     "name": "Light", "detail": "Qwen3 · 1.7B",
      "focus": (
       "Answers fastest. Suits 16 GB machines and quick "
       "back-and-forth."),
-     "bytes": 1_820_000_000, "tools": True},
+     "bytes": 980_000_000, "tools": True},
     {"id": "mlx-community/Qwen3-4B-Instruct-2507-4bit",
      "name": "Everyday", "detail": "Qwen3 · 4B",
      "focus": (

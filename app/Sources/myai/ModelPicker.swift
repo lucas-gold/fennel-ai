@@ -101,7 +101,7 @@ struct ModelPicker: View {
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
                     Text(m.name).font(.system(size: 12.5, weight: .semibold))
-                    Text(m.detail).font(.system(size: 10.5)).foregroundStyle(.secondary)
+                    ModelSourceLink(model: m, size: 10.5)
                 }
                 Text(m.focus)
                     .font(.system(size: 10.5)).foregroundStyle(.secondary)
@@ -416,15 +416,21 @@ struct ModelPicker: View {
 /// picker where every second line is a link reads as a page of links.
 private struct ModelSourceLink: View {
     let model: ModelOption
+    var size: CGFloat = 11
     @State private var hovering = false
 
     var body: some View {
         Text(hovering ? model.id : model.detail)
-            .font(.system(size: 11))
-            .foregroundStyle(hovering ? Color.primary : Color.secondary)
+            .font(.system(size: size))
+            // Unchanged colour: brightening it as well as lengthening it made
+            // the row twitch for something that is only a detail.
+            .foregroundStyle(.secondary)
             .lineLimit(1)
             .fixedSize()
-            .animation(.easeOut(duration: 0.15), value: hovering)
+            // Cross-fade the text rather than animating the layout, so the path
+            // appears in place instead of sliding out from under the pointer.
+            .contentTransition(.opacity)
+            .animation(.easeInOut(duration: 0.18), value: hovering)
             .onHover { hovering = $0 }
             .onTapGesture {
                 if let url = URL(string: "https://huggingface.co/\(model.id)") {
