@@ -92,9 +92,14 @@ def filename_for(title: str, card_id: str) -> str:
 
 
 def installed() -> bool:
-    """Whether the diffusion weights are already downloaded."""
-    from voice.setup import _weights_on_disk
-    return MODEL_REPO in _weights_on_disk()
+    """Whether the diffusion weights are downloaded — all of them.
+
+    A half-finished fetch leaves real files behind, and counting those as
+    installed had the picker skip the download and the first picture pay for it
+    instead.
+    """
+    from voice.setup import complete
+    return complete(MODEL_REPO, MODEL_BYTES)
 
 
 def download(progress: Optional[Callable[[int, int], None]] = None) -> None:
