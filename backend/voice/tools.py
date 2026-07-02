@@ -210,6 +210,11 @@ TOOLS: list[dict] = [
                 "Also call it any time the user asks you to search or look "
                 "something up online. Prefer search_wikipedia only when a plain "
                 "encyclopedia article would answer just as well.\n"
+                "Never put a relative date in the query — no 'yesterday', "
+                "'today', 'last night' or 'this week'. A search engine resolves "
+                "those against its own index, not against now, and will happily "
+                "return last year. Look the date up in the table above and "
+                "search for it: 'Blue Jays result August 30 2026'.\n"
                 "Work like a researcher: search with terms, not a sentence. You "
                 "are given several results with snippets — read them, say what "
                 "you found and where, and if they don't actually answer the "
@@ -879,10 +884,16 @@ def system_prompt(base: str, now: Optional[datetime] = None) -> str:
     arithmetic right but miscounts weekdays ("next Wednesday" landed five days
     late), and looking the date up beats computing it."""
     now = now or datetime.now()
+    # Backwards as well as forwards. The table began at today, so "yesterday"
+    # could not be resolved from it at all — and the model passed the word
+    # itself into a web search, where the engine resolved it against its own
+    # index and returned a result from the previous year.
+    def _label(i: int) -> str:
+        return {0: "  (today)", 1: "  (tomorrow)", -1: "  (yesterday)"}.get(i, "")
+
     days = "\n".join(
-        f"  {(now + timedelta(days=i)).strftime('%A %Y-%m-%d')}"
-        f"{'  (today)' if i == 0 else '  (tomorrow)' if i == 1 else ''}"
-        for i in range(8)
+        f"  {(now + timedelta(days=i)).strftime('%A %Y-%m-%d')}{_label(i)}"
+        for i in range(-3, 8)
     )
     return (
         f"{base}\n\n"
