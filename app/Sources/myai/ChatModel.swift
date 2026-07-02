@@ -283,6 +283,24 @@ final class ChatModel: ObservableObject {
                 return ChatMessage(role: role == "user" ? .user : .assistant,
                                    text: text, seq: takeSeq())
             }
+            // Cards come back with the conversation. Rebuilt from what was
+            // stored rather than replayed as tool calls: a restored reminder
+            // must not create itself in Reminders a second time.
+            cards = (msg["cards"] as? [[String: Any]] ?? []).compactMap { row in
+                guard let id = row["id"] as? String,
+                      let name = row["name"] as? String,
+                      let args = row["args"] as? [String: Any],
+                      var card = HomeCard(id: id, name: name, args: args)
+                else { return nil }
+                card.seq = takeSeq()
+                if let path = args["path"] as? String { card.imagePath = path }
+                switch args["status"] as? String {
+                case "failed": card.status = .failed(args["detail"] as? String ?? "Failed")
+                case "working": card.status = .failed("Interrupted")
+                default: card.status = .done
+                }
+                return card
+            }
             activeTurn = nil
             sawTurnEnd = true
             sessionLoaded = true
@@ -412,6 +430,9 @@ final class ChatModel: ObservableObject {
         if card.kind == .image, card.status == .working {
             client.send(Wire.encode("card_cancel", ["id": card.id]))
         }
+        // Forget it on the backend as well, or it returns next time the chat is
+        // opened — a dismissed card that comes back is not dismissed.
+        client.send(Wire.encode("card_forget", ["id": card.id]))
         guard card.kind.writesToEventKit, let ext = card.externalID else {
             cards.removeAll { $0.id == card.id }
             return
