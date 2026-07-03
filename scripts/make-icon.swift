@@ -1,5 +1,5 @@
-// Renders the Fennel logomark to an .icns, from the same geometry the app draws.
-// One source of truth for the mark: no hand-exported PNGs to drift out of sync.
+// Renders the Fennel logomark to an .icns using the same geometry the app draws,
+// so the icon and the in-app mark can't drift apart.
 import AppKit
 
 let sizes = [16, 32, 64, 128, 256, 512, 1024]
@@ -8,8 +8,8 @@ let iconset = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponen
 try? FileManager.default.removeItem(at: iconset)
 try FileManager.default.createDirectory(at: iconset, withIntermediateDirectories: true)
 
-// Same geometry as FennelMark.swift — squat ribbed bulb, feathery spray.
-// Grouped by stroke weight, because the parts are not drawn at the same weight.
+// Mirrors FennelMark.swift. Grouped by stroke weight, since the bulb and the
+// fronds are drawn at different weights.
 func markPaths(_ side: CGFloat) -> [(NSBezierPath, CGFloat)] {
     let s = side / 120
     func p(_ x: CGFloat, _ y: CGFloat) -> NSPoint { NSPoint(x: x * s, y: side - y * s) }
@@ -56,8 +56,8 @@ func render(_ side: Int) -> Data {
     let px = CGFloat(side)
     let image = NSImage(size: NSSize(width: px, height: px))
     image.lockFocus()
-    // Rounded-square ground in the app's accent, mark knocked out in white:
-    // macOS icons read better as a filled tile than a floating glyph.
+    // Filled tile in the accent with the mark knocked out — reads better at
+    // small sizes than a floating glyph.
     let inset = px * 0.06
     let tile = NSBezierPath(roundedRect: NSRect(x: inset, y: inset,
                                                 width: px - inset*2, height: px - inset*2),

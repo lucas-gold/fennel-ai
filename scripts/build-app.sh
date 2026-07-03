@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
-# Build the SwiftUI app and wrap it in a proper .app bundle.
-#
-# Why a bundle (not `swift run`): microphone access (and later EventKit) needs an
-# Info.plist usage string + a code signature, which a bare SwiftPM binary lacks.
-# Ad-hoc signing (`-`) is enough for local dev; Developer ID comes at Stage 5.
+# Build the SwiftUI app into a .app bundle for local use.
+# Microphone and EventKit access need an Info.plist and a signature, so a bare
+# SwiftPM binary won't do. Ad-hoc signing is enough here; see bundle-app.sh for
+# a distributable build.
 set -euo pipefail
 cd "$(dirname "$0")/../app"
 
@@ -18,14 +17,15 @@ mkdir -p "$APP/Contents/Resources"
 cp "$BIN" "$APP/Contents/MacOS/Fennel"
 cp Resources/Info.plist "$APP/Contents/Info.plist"
 [ -f Resources/Fennel.icns ] && cp Resources/Fennel.icns "$APP/Contents/Resources/Fennel.icns"
-# GPL-3.0 requires the licence to accompany the binary, and Apache-2.0 §4 wants
-# its text to travel too. The app reads these from Resources at runtime.
-cp ../LICENSE            "$APP/Contents/Resources/LICENSE.txt"
-cp ../THIRD-PARTY.md     "$APP/Contents/Resources/THIRD-PARTY.md"
+
+# GPL-3.0 and Apache-2.0 both require their text to ship with the binary.
+# The app reads these from Resources at runtime.
+cp ../LICENSE                 "$APP/Contents/Resources/LICENSE.txt"
+cp ../THIRD-PARTY.md          "$APP/Contents/Resources/THIRD-PARTY.md"
 cp ../licenses/APACHE-2.0.txt "$APP/Contents/Resources/APACHE-2.0.txt"
 cp ../licenses/PERMISSIVE.txt "$APP/Contents/Resources/PERMISSIVE.txt"
 codesign --force --sign - "$APP"
 
 echo "built $APP"
-echo "run:  open $APP        # windowed app; grants the mic prompt on first launch"
-echo "      $APP/Contents/MacOS/Fennel   # same, but with console logs in the terminal"
+echo "  open $APP                     # windowed"
+echo "  $APP/Contents/MacOS/Fennel    # with console logs"

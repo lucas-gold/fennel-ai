@@ -1,10 +1,6 @@
 #!/usr/bin/env bash
-# Notarize the built DMG so macOS will open it without warnings.
-#
-# This is the step that makes a download "safe" in Gatekeeper's eyes, and it
-# cannot be faked: it needs a paid Apple Developer account ($99/yr) and a
-# Developer ID Application certificate. Without it users see "Fennel is damaged
-# and can't be opened" and have to strip the quarantine flag by hand.
+# Notarize the built DMG so Gatekeeper will open it on other Macs.
+# Needs a paid Apple Developer account and a Developer ID certificate.
 #
 # One-time setup:
 #   xcrun notarytool store-credentials fennel \
