@@ -414,6 +414,8 @@ async def handler(ws) -> None:
                     await _drop_llm()
                     _set_setup(phase="choose_model", **_picker_fields(),
                                current=config.LLM_MODEL, note="")
+                elif msg["type"] == "card_forget":
+                    _store.forget_card(str(msg.get("id", "")))
                 elif msg["type"] == "card_cancel":
                     # Dismissing a picture stops the work as well as hiding the
                     # card — a minute of computation for something the user has

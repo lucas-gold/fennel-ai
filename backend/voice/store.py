@@ -78,6 +78,20 @@ CREATE TRIGGER IF NOT EXISTS messages_ad AFTER DELETE ON messages BEGIN
         VALUES ('delete', old.id, old.content);
 END;
 
+-- Cards raised by tool calls. Kept with the conversation because they are part
+-- of it: a reminder, a picture, a search result. Without this a reopened chat
+-- showed "Drawing that now" with nothing underneath — the reply survived and
+-- the thing it was about did not.
+CREATE TABLE IF NOT EXISTS cards (
+  id         TEXT PRIMARY KEY,
+  session_id INTEGER NOT NULL,
+  seq        INTEGER NOT NULL,
+  kind       TEXT NOT NULL,
+  payload    TEXT NOT NULL,
+  ts         REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS cards_by_session ON cards(session_id, seq);
+
 CREATE TABLE IF NOT EXISTS facts (
     key     TEXT PRIMARY KEY,
     value   TEXT NOT NULL,
@@ -230,6 +244,42 @@ class Store:
                              (now, session_id))
             self._db.commit()
             return int(cur.lastrowid)
+
+    def save_card(self, session_id: int, card_id: str, seq: int, kind: str,
+                  payload: dict) -> None:
+        """Record a card, or update one already recorded.
+
+        Upsert rather than insert: a picture's card is written when it starts
+        and again when it finishes, and the finished one is what matters.
+        """
+        import json as _json
+        import time as _time
+        with self._lock, self._db:
+            self._db.execute(
+                "INSERT INTO cards (id, session_id, seq, kind, payload, ts) "
+                "VALUES (?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET "
+                "payload=excluded.payload, kind=excluded.kind",
+                (card_id, int(session_id), int(seq), kind,
+                 _json.dumps(payload), _time.time()))
+
+    def forget_card(self, card_id: str) -> None:
+        with self._lock, self._db:
+            self._db.execute("DELETE FROM cards WHERE id = ?", (card_id,))
+
+    def cards(self, session_id: int) -> list[dict]:
+        import json as _json
+        with self._lock:
+            rows = self._db.execute(
+                "SELECT id, kind, payload FROM cards WHERE session_id = ? "
+                "ORDER BY seq, ts", (int(session_id),)).fetchall()
+        out = []
+        for r in rows:
+            try:
+                out.append({"id": r["id"], "name": r["kind"],
+                            "args": _json.loads(r["payload"])})
+            except Exception:
+                pass
+        return out
 
     def messages(self, session_id: int, limit: Optional[int] = None) -> list[dict]:
         q = ("SELECT id, role, content, ts, prompt_text FROM messages"

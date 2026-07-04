@@ -182,7 +182,11 @@ class Session:
         rows = self._store.messages(self._session_id)
         await self._send_control(P.encode(
             "session_opened", id=self._session_id,
-            messages=[{"role": r["role"], "text": r["content"]} for r in rows]))
+            messages=[{"role": r["role"], "text": r["content"]} for r in rows],
+            # Restored, not re-run: these are shown as they were left. Sending
+            # them as `tool` frames would have the app perform every side effect
+            # again — a reopened chat would re-create its own reminders.
+            cards=self._store.cards(self._session_id)))
         await self.send_sessions()
 
         # Resuming replays the verbatim window, and that is a real prefill —
@@ -448,6 +452,7 @@ class Session:
         fut: asyncio.Future = asyncio.get_running_loop().create_future()
         self._pending[call_id] = fut
         await self._send_control(P.encode("tool", id=call_id, name=name, args=card))
+        self._remember_card(call_id, name, card)
 
         if name == "generate_image":
             # The picture takes about a minute. The card is already on screen,
@@ -759,7 +764,24 @@ class Session:
               flush=True)
         await self._send_control(
             P.encode("tool", id=call_id, name="generate_image", args=card))
+        self._remember_card(call_id, "generate_image", card)
         asyncio.create_task(self._draw_image(call_id, card))
+
+    def _remember_card(self, card_id: str, name: str, card: dict,
+                       **extra) -> None:
+        """Keep a card with its conversation, so reopening the chat shows it.
+
+        Only messages were stored, so a resumed chat had the reply that
+        announced a card — "Drawing that now" — with nothing beneath it.
+        """
+        try:
+            self._store.save_card(self._session_id, card_id, self._card_seq(),
+                                  name, dict(card, **extra))
+        except Exception as exc:
+            print(f"[cards] couldn't save {card_id}: {exc}", flush=True)
+
+    def _card_seq(self) -> int:
+        return len(self._messages)
 
     async def _draw_image(self, card_id: str, card: dict) -> None:
         """Render a picture and post it back to its card.
@@ -771,6 +793,10 @@ class Session:
 
         async def update(**fields) -> None:
             await self._send_control(P.encode("card_update", id=card_id, **fields))
+            # Persist only the settled states; progress lines are not worth
+            # writing to disk four times a picture.
+            if fields.get("status") in ("done", "failed"):
+                self._remember_card(card_id, "generate_image", card, **fields)
 
         if _IMAGE_LOCK.locked():
             await update(status="working",
