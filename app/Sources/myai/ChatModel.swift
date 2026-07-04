@@ -274,6 +274,12 @@ final class ChatModel: ObservableObject {
                 sessions = items.compactMap(ChatSession.init(json:))
             }
             if let cur = msg["current"] as? Int { adoptCurrent(cur) }
+        case "split":
+            // The model paused to use a tool. End this bubble and show the
+            // dots: the next thing it says is a separate remark, arriving
+            // after a wait the user should be able to see.
+            activeTurn = nil
+            showTyping = true
         case "session_opened":
             if let id = msg["id"] as? Int { adoptCurrent(id) }
             let rows = msg["messages"] as? [[String: Any]] ?? []
@@ -600,6 +606,7 @@ final class ChatModel: ObservableObject {
     }
 
     private func appendToken(_ chunk: String, turn: Int) {
+        showTyping = false
         if activeTurn != turn || messages.last?.role != .assistant {
             activeTurn = turn
             messages.append(ChatMessage(role: .assistant, text: chunk, seq: takeSeq()))

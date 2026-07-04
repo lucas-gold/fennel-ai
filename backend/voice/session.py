@@ -645,6 +645,13 @@ class Session:
                 self._messages.append({"role": "assistant", "content": raw})
                 if not calls or round_ == config.LLM_TOOL_ROUNDS:
                     break
+                # Close the bubble before the tool runs. What the model says
+                # on its way to a search ("let me look that up") and what it
+                # says afterwards are two different remarks, and running them
+                # together left the answer buried under its own preamble with
+                # no sign that anything had happened in between.
+                if said.strip():
+                    await self._send_control(P.encode("split", turn=turn))
                 results = [c.get("result", {"name": c["name"], "ok": True}) for c in calls]
                 self._messages.append({
                     "role": "tool",
