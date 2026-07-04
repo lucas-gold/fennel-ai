@@ -176,6 +176,10 @@ def generate(prompt: str, out_path: str, *, pixels: int = 1024,
     if seed is not None:
         argv += ["--seed", str(seed)]
 
+    if not installed():
+        raise RuntimeError(
+            "the image model isn't downloaded — turn image generation on in "
+            "the model chooser and it will be fetched there")
     if token:
         with _procs_lock:
             if token in _cancelled:
@@ -208,7 +212,15 @@ def generate(prompt: str, out_path: str, *, pixels: int = 1024,
                 progress("Downloading the image model — 4.6 GB, once", 0.0)
             elif (m := _STEP.search(line)):
                 done, total = int(m.group(1)), int(m.group(2))
-                if total:
+                if not total:
+                    continue
+                # Step 0 is tqdm announcing itself before any denoising has
+                # happened — the weights are still being read, which is most of
+                # the wait. Saying "rendering step 0 of 4" for ninety seconds
+                # made it look wedged on a step that had not started.
+                if done == 0:
+                    progress("Loading the image model…", 0.02)
+                else:
                     progress(f"Rendering — step {done} of {total}", done / total)
 
     reader = threading.Thread(target=pump, daemon=True)

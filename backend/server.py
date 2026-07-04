@@ -586,11 +586,13 @@ async def _choose_and_load(already_chosen: bool = False) -> None:
     while True:
         stored = config.LLM_MODEL if force_picker else (
             _store.setting("llm_model", "") or config.DEFAULT_MODEL)
+        asked = already_chosen        # a deliberate choice, picker or not
         if already_chosen and not force_picker:
             config.LLM_MODEL = stored
         elif not force_picker and model_setup.installed(stored):
             config.LLM_MODEL = stored
         else:
+            asked = True
             _model_chosen.clear()
             _chosen_model = ""
             # The only place the cancel flag is reset. Clearing it before each
@@ -606,7 +608,7 @@ async def _choose_and_load(already_chosen: bool = False) -> None:
         chosen = config.model_info(config.LLM_MODEL)
         print(f"[setup] model: {chosen['name']} ({config.LLM_MODEL})", flush=True)
         try:
-            await _load_everything(chosen)
+            await _load_everything(chosen, may_fetch_images=asked)
         except _Cancelled:
             print("[setup] load cancelled; back to the picker", flush=True)
             already_chosen = False
@@ -713,7 +715,7 @@ async def _drop_llm() -> None:
         await asyncio.to_thread(old.unload)
 
 
-async def _load_everything(chosen: dict) -> None:
+async def _load_everything(chosen: dict, may_fetch_images: bool = False) -> None:
     """Download if needed, load every model, warm and prime.
 
     Raises `_Cancelled` if the loading screen's Cancel is pressed; the
@@ -723,7 +725,12 @@ async def _load_everything(chosen: dict) -> None:
 
     # The picture model, if it is switched on and not yet here. Downloaded with
     # the rest rather than in the middle of the first request for a picture.
-    if (_store.setting("images", "1") or "1") == "1" and not image_gen.installed():
+    # Only after the picker. The switch is on by default, so a launch that goes
+    # straight to the chat — because last time's model is still on disk — was
+    # quietly fetching 4.6 GB nobody had asked for on that run.
+    if (may_fetch_images
+            and (_store.setting("images", "1") or "1") == "1"
+            and not image_gen.installed()):
         _check_cancel()
         size = model_setup.human(image_gen.MODEL_BYTES)
         _set_setup(phase="downloading", progress=0.0, size=size,
