@@ -1,14 +1,12 @@
 """Wire protocol between the Swift app and the Python backend.
 
-Two channels over one local WebSocket (offline, 127.0.0.1):
+Two channels over one local WebSocket on 127.0.0.1:
 
-  - Control frames: JSON text messages, shapes below.
-  - Audio frames:   binary. Mic in = 16 kHz int16 PCM, 512-sample frames.
-                    Audio out = b">II" header (turn, seq) + 24 kHz int16 PCM.
-                    (Audio is Stage 2; only control frames exist in Stage 0.)
+  - Control frames: JSON text, listed below.
+  - Audio frames:   binary. Mic in is 16 kHz int16 PCM in 512-sample frames;
+                    audio out is a ">II" header (turn, seq) then 24 kHz int16.
 
-Keep this file the single source of truth for message shapes. Both sides
-must agree; the Swift `Protocol.swift` mirrors it.
+Both sides must agree on these shapes; Protocol.swift mirrors this file.
 """
 from __future__ import annotations
 
@@ -18,34 +16,53 @@ from typing import Any
 
 import numpy as np
 
-# Audio-out frame: ">II" header (turn, seq) + int16 PCM @24 kHz.
 _AUDIO_HEADER = struct.Struct(">II")
 
 # ── client → server ────────────────────────────────────────────────────────
-# {"type": "user_text", "text": "...", "speak": bool}   user typed a message
-# {"type": "tool_result", "id": "...", "ok": bool, "error": "..."}
-#     Stage 3: the app finished (or failed) the real EventKit write for the
-#     tool call with this id. The backend waits briefly for this so the spoken
-#     confirmation matches reality.
-# {"type": "session_list"}                 ask for the chat list
-# {"type": "session_open", "id": N}        resume a saved chat
-# {"type": "session_new"}                  start a fresh chat
-# {"type": "session_delete", "id": N}      delete a chat and its messages
-# {"type": "ping"}                         liveness check
+# {"type": "user_text", "text": "...", "speak": bool}
+# {"type": "tool_result", "id": "...", "ok": bool, "error": "...", "data": {...}}
+#     The app has finished (or failed) the real side effect for this tool call.
+#     The backend waits briefly so the spoken confirmation matches what
+#     happened. A read-style tool such as agenda returns its answer in "data".
+# {"type": "settings", "daily_updates": bool, "location": "...",
+#           "lookups": bool, "web_key": "..."}
+# {"type": "setup_consent"}                allow the first model download
+# {"type": "model_select", "id": "..."}    load this model
+# {"type": "model_reopen"}                 show the picker again
+# {"type": "model_cancel"}                 abandon a load in progress
+# {"type": "model_unload"}                 free the resident model
+# {"type": "model_delete", "id": "..."}    delete a model's weights
+# {"type": "model_probe",  "id": "..."}    inspect a repo without downloading
+# {"type": "model_add",    "id": "..."}    keep a probed repo in the picker
+# {"type": "image_toggle", "enabled": bool}
+# {"type": "image_delete"}                 delete the image model's weights
+# {"type": "card_cancel", "id": "..."}     stop a picture being drawn
+# {"type": "card_forget", "id": "..."}     drop a dismissed card for good
+# {"type": "session_list" | "session_new"}
+# {"type": "session_open" | "session_delete", "id": N}
+# {"type": "ping"}
 #
 # ── server → client ────────────────────────────────────────────────────────
 # {"type": "state", "value": "idle|listening|thinking|speaking"}
 # {"type": "stt", "text": "..."}                what the mic was heard to say
-# {"type": "token", "turn": N, "text": "..."}   one streamed LLM token/chunk
+# {"type": "token", "turn": N, "text": "..."}   one chunk of the reply
+# {"type": "split", "turn": N}                  end this bubble; a tool follows
 # {"type": "turn_end", "turn": N}               reply complete
+# {"type": "busy", "text": "..."}               a turn arrived mid-generation
+# {"type": "cancel"}                            drop any audio still queued
 # {"type": "tool", "id": "...", "name": "...", "args": {...}}
-#     Stage 3: drives the home UI. `name` is one of set_reminder / add_event /
-#     show_panel / set_fact; `args` is already normalized (absolute ISO times).
-#     The app renders a card, performs the side effect, and replies tool_result.
-#     A read-style tool (agenda) gets its answer back via tool_result "data".
-# {"type": "sessions", "items": [{id,title,updated,count}], "current": N}
-# {"type": "session_opened", "id": N, "messages": [{"role","text"}]}
-# {"type": "cancel"}                      drop any audio still queued
+#     Raises a card and asks the app to perform the side effect. `args` is
+#     normalized, with absolute ISO times.
+# {"type": "card_update", "id": "...", "status": "...", ...}
+#     Progress or outcome for a card already on screen.
+# {"type": "setup", "phase": "...", ...}
+#     Startup and the model picker: checking, choose_model, needs_consent,
+#     downloading, loading, ready, failed.
+# {"type": "memory", "llm_bytes": N, "system_used_bytes": N, ...}
+# {"type": "settings", ...}                     mirrors the client frame
+# {"type": "model_probe", "ok": bool, "problems": [...], "warnings": [...]}
+# {"type": "sessions", "items": [{id,title,updated,count}]}
+# {"type": "session_opened", "id": N, "messages": [...], "cards": [...]}
 # {"type": "pong"}
 
 
@@ -61,7 +78,7 @@ def decode(raw: str) -> dict[str, Any]:
 
 
 def pack_audio(turn: int, seq: int, pcm_int16: np.ndarray) -> bytes:
-    """Audio-out frame: header + int16 PCM. The Swift client mirrors this."""
+    """Header + int16 PCM."""
     return _AUDIO_HEADER.pack(turn, seq) + pcm_int16.astype("<i2").tobytes()
 
 
