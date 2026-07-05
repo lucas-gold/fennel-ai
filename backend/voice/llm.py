@@ -1,10 +1,9 @@
-"""LLM stage: mlx-lm streaming with explicit prefix-cache reuse (reference D4).
+"""Streaming generation with explicit prefix-cache reuse.
 
 One KV cache holds the whole conversation. Each turn we diff the new full
 prompt against what's already cached and prefill only the delta. Anything that
-varies per turn (recalled memory, tool results — Stage 3) must therefore sit
-LAST in the prompt, or it invalidates the cached prefix behind it and silently
-doubles time-to-first-token.
+varies per turn — recalled memory, tool results — must sit LAST in the prompt,
+or it invalidates the cached prefix behind it and doubles time-to-first-token.
 """
 from __future__ import annotations
 
@@ -40,27 +39,22 @@ def _common_prefix(a: list[int], b: list[int]) -> int:
 
 class LLM:
     def __init__(self, model_id: Optional[str] = None) -> None:
-        # Resolved here, not as a default argument: a default is bound once when
-        # the class is defined, so `config.LLM_MODEL = chosen` at startup would
-        # have been ignored and the picker would have silently loaded whatever
-        # the module held at import time.
+        # Resolved here rather than as a default argument, which would bind once at
+        # class definition and ignore the model the picker chose.
         model_id = model_id or config.LLM_MODEL
         # The one thread MLX is allowed to see. mlx-lm generates inside a
-        # module-level `generation_stream`, and MLX registers streams per
-        # thread: arrays produced on one thread cannot be evaluated on another
-        # ("There is no Stream(gpu, 1) in current thread"). Every entry point
-        # here arrives on `asyncio.to_thread`, which hands out a different pool
-        # thread each time — so the lock below was never enough on its own. It
-        # serialised access without pinning identity. Weights included: the
-        # model is loaded here too, so nothing MLX owns is born off-thread.
+        # module-level generation_stream and MLX registers streams per thread, so
+        # arrays made on one thread can't be evaluated on another. Every entry
+        # point here arrives on asyncio.to_thread, which hands out a different pool
+        # thread each time — the lock below serialises access but not identity.
+        # The weights load here too, so nothing MLX owns is born off-thread.
         self._exec = ThreadPoolExecutor(max_workers=1, thread_name_prefix="mlx")
         self._mlx_thread = self._exec.submit(threading.current_thread).result()
 
         def _load() -> tuple:
-            # Bound MLX's buffer cache before anything allocates — or don't,
-            # if the config says so. MLX's default is unbounded; the cap is
-            # there for machines where the pool competing with the weights
-            # means swapping (see config.MLX_CACHE_LIMIT_BYTES).
+            # Cap MLX's buffer pool before anything allocates, if the config asks for
+            # it. Unbounded is MLX's default; the cap is for machines where the pool
+            # competing with the weights means swapping.
             if config.MLX_CACHE_LIMIT_BYTES is not None:
                 mx.set_cache_limit(config.MLX_CACHE_LIMIT_BYTES)
             return load(model_id)
@@ -72,31 +66,23 @@ class LLM:
         self._cached_ids: list[int] = []
         self._prime_len = 0
         self._prime_key = ""
-        # Which tools to advertise. Optional ones come and go with the user's
-        # settings, and changing them changes the primed prefix.
+        # Which tools to advertise. Optional ones follow the user's settings, and
+        # changing them changes the primed prefix.
         self.tools = list(TOOLS)
         self._sampler = make_sampler(temp=config.LLM_TEMP, top_p=config.LLM_TOP_P)
-        # One model, one KV cache, several worker threads (generation, background
-        # summarising, re-priming when the daily briefing lands). Running two of
-        # those at once crashes MLX natively — no Python traceback, the process
-        # just dies — so every entry point that touches the model takes this.
-        # Still needed beside the single thread above: it guards the KV cache
-        # against a caller queueing work from two places at once.
+        # Guards the KV cache against a caller queueing work from two places at
+        # once. Two concurrent generations kill the process natively, with no
+        # Python traceback.
         self._lock = threading.RLock()
 
     def _ensure_turn_end_stops(self) -> None:
-        """Guarantee the token the chat template ends a turn with actually ends
-        generation.
+        """Make sure the token the chat template ends a turn with stops generation.
 
-        mlx-lm takes its stop ids from config.json / generation_config.json, and
-        those files do not always agree with the template beside them. This
-        model's configs name <|endoftext|> while every rendered turn closes with
-        <|im_end|>, so nothing ever matched: generation ran to max_tokens and
-        the model sailed straight past its own reply into writing both halves of
-        an invented conversation, thinking blocks and all.
-
-        Adding the tokenizer's own declared eos_token costs nothing when the two
-        already agree — Qwen3-4B lists both tokens and is unaffected.
+        mlx-lm takes its stop ids from config.json and generation_config.json,
+        which don't always agree with the template beside them — a config naming
+        <|endoftext|> while every turn closes with <|im_end|> means nothing ever
+        matches and generation runs to max_tokens. Adding the tokenizer's own
+        declared eos_token is a no-op when the two already agree.
         """
         declared = getattr(self.tokenizer, "eos_token", None)
         if not declared:
@@ -116,11 +102,10 @@ class LLM:
     def unload(self) -> None:
         """Give the weights back before another model is loaded.
 
-        On a 24 GB machine two models do not fit at once, so a swap has to free
-        the first completely rather than trusting the allocator to catch up:
-        drop the KV cache and the weights, collect, and empty MLX's buffer pool.
-        The freeing runs on the MLX thread — the same one that allocated it —
-        and the executor is retired afterwards, so this instance is finished.
+        Two models don't fit at once, so a swap frees the first outright: drop
+        the KV cache and the weights, collect, empty MLX's buffer pool. Runs on
+        the thread that allocated it, and retires the executor afterwards — this
+        instance is finished.
         """
         def _free() -> None:
             self._cache = None
@@ -139,9 +124,8 @@ class LLM:
 
     @property
     def available(self) -> bool:
-        """False once `unload` has run. Anything that would generate must check:
-        the object outlives its weights, and calling into it after that is a
-        crash rather than a slow reply."""
+        """False once `unload` has run. The object outlives its weights, so
+        anything that would generate has to check first."""
         return self.model is not None
 
     def _on_mlx(self, fn, *args, **kwargs):
@@ -151,8 +135,8 @@ class LLM:
         return self._exec.submit(fn, *args, **kwargs).result()
 
     def reset(self) -> None:
-        """New conversation: drop everything the conversation added, but keep
-        the primed system prefix — re-prefilling it costs seconds (see prime)."""
+        """New conversation: drop what the conversation added, keep the primed
+        system prefix."""
         if self._prime_len and len(self._cached_ids) >= self._prime_len:
             trim_prompt_cache(self._cache, len(self._cached_ids) - self._prime_len)
             self._cached_ids = self._cached_ids[:self._prime_len]
@@ -170,11 +154,8 @@ class LLM:
         from voice.store import APP_DIR
         key = hashlib.sha256(
             f"{self.model_id}|{token_count}|{self._prime_key}".encode()).hexdigest()[:16]
-        # The model goes in the filename, not just the hash, so a sweep can tell
-        # one model's cache from another's. Sweeping by hash alone left exactly
-        # one file on disk for the whole app, which meant switching models threw
-        # away the cache of the model you were switching away from — and every
-        # switch back paid the full prime again.
+        # The model is in the filename so a sweep can tell one model's cache from
+        # another's, and switching models doesn't throw away the one you left.
         return os.path.join(APP_DIR, "primecache",
                             f"{self._model_slug()}-{key}.safetensors")
 
@@ -184,18 +165,11 @@ class LLM:
     def _stable_prefix_len(self, system: str, probe: list[int]) -> int:
         """How many leading tokens of a real prompt the user cannot influence.
 
-        Rendering the system message on its own is the direct way to ask, and
-        it is what Qwen3-4B's template allows. Not every template does: Qwen3.5
-        scans the message list for a user turn and raises "No user query found
-        in messages" on a system-only render, which took the whole backend down
-        during priming.
-
-        So ask a second way when the first is refused — render the same system
-        block against two different user messages and find where they diverge.
-        That point is the end of everything the user did not contribute, which
-        is exactly the span worth pinning, and it assumes nothing about the
-        template beyond its working at all. The result is a true prefix of a
-        real prompt either way, so a wrong guess costs reuse, never correctness.
+        Rendering the system message alone is the direct way to ask, but some
+        templates refuse it — Qwen3.5 raises "No user query found in messages".
+        The fallback renders the same system block against two different user
+        messages and takes the point where they diverge. Either answer is a true
+        prefix of a real prompt, so a wrong guess costs reuse, not correctness.
         """
         try:
             sys_only = list(self.tokenizer.apply_chat_template(
@@ -210,20 +184,19 @@ class LLM:
             return _common_prefix(probe, other)
 
     def prime(self, system: str) -> None:
-        """Prefill the stable prefix — persona, tool schemas, day table — once at
-        startup and pin it under every later `reset`.
+        """Prefill the stable prefix once at startup and pin it under `reset`.
 
-        Worth the trouble because the tool schemas alone are ~640 tokens and
-        this machine prefills at only ~200 tok/s: without priming, the first
-        turn of every session pays ~4.7 s before the model says anything.
+        Persona, tool schemas and the day table come to a few thousand tokens.
+        Without this the first turn of every session waits several seconds
+        before the model says anything.
         """
         if threading.current_thread() is not self._mlx_thread:
             return self._on_mlx(self.prime, system)
         with self._lock:
             self._prime_len = 0
             self.reset()
-        # Prime only the span that a real prompt genuinely begins with, so the
-        # cached tokens are a true prefix and `_common_prefix` reuses all of it.
+        # Prime only the span a real prompt begins with, so the cached tokens are a
+        # true prefix and _common_prefix reuses all of them.
         probe = self._prompt_ids([{"role": "system", "content": system},
                                   {"role": "user", "content": "hi"}])
         n = self._stable_prefix_len(system, probe)
@@ -231,10 +204,8 @@ class LLM:
         self._prime_key = system
         path = self._prime_cache_path(n)
 
-        # Restoring beats recomputing by a wide margin: this machine prefills at
-        # ~187 tok/s no matter how the work is chunked, so ~2700 tokens is ~15 s
-        # of arithmetic that is byte-identical on every launch. Measured 14.60 s
-        # to compute versus 0.03 s to load.
+        # Restoring takes about 0.03 s against ~15 s to recompute, and the result is
+        # byte-identical on every launch.
         with self._lock:
             if os.path.exists(path):
                 try:
@@ -267,20 +238,16 @@ class LLM:
             mx.clear_cache()      # a one-off spike; don't hold it for the session
         print(f"[llm] primed {n} prefix tokens", flush=True)
 
-    #: How many models keep a primed prefix on disk. Each is a few hundred MB,
-    #: and the point of keeping more than one is that switching model and back
-    #: should not re-prime; four covers moving between a couple of favourites
-    #: without the directory growing without bound.
+    #: How many models keep a primed prefix on disk. A few hundred MB each, so
+    #: enough to switch between a couple of favourites without re-priming.
     KEEP_PRIME_CACHES = 4
 
     def _save_prime_cache(self, path: str, n: int) -> None:
         """Persist the primed state.
 
-        Two kinds of staleness to sweep. This model's own older prefixes are
-        always dropped — the prefix changes whenever the briefing does, which is
-        daily, and a directory of stale dailies would quietly eat the disk.
-        Other models' caches are kept, up to KEEP_PRIME_CACHES, least recently
-        used first, so switching back to a model is cheap.
+        This model's older prefixes are dropped — the prefix changes daily with
+        the briefing. Other models' caches are kept, up to KEEP_PRIME_CACHES and
+        least recently used first, so switching back to one is cheap.
         """
         try:
             folder = os.path.dirname(path)
@@ -308,9 +275,8 @@ class LLM:
     def complete(self, messages: list[Message], max_tokens: int = 160) -> str:
         """One-shot generation on a throwaway cache.
 
-        Used for background work like summarising (D8). It must NOT touch
-        `self._cache`: sharing it would evict the live conversation's prefix and
-        make the user's next turn pay a full re-prefill.
+        For background work such as summarising. It must not touch self._cache:
+        sharing it evicts the live conversation's prefix.
         """
         if threading.current_thread() is not self._mlx_thread:
             return self._on_mlx(self.complete, messages, max_tokens)
@@ -335,8 +301,8 @@ class LLM:
 
     def _prompt_ids(self, messages: list[Message],
                     generation: bool = True) -> list[int]:
-        # `tools=` renders the signatures into the system block — stable prefix,
-        # so tool-calling costs one prefill per session, not one per turn (D4).
+        # `tools=` renders the signatures into the system block, which is part
+        # of the stable prefix — so tool-calling costs one prefill per session.
         return list(
             self.tokenizer.apply_chat_template(
                 messages, add_generation_prompt=generation, tokenize=True,
@@ -348,13 +314,12 @@ class LLM:
     def warm(self, messages: list[Message]) -> None:
         """Prefill a conversation without generating, so the next turn starts hot.
 
-        Used after the verbatim window is trimmed, which changes the prompt at
-        the front and therefore costs a full re-prefill — measured at 2.2 s,
-        landing on one unlucky turn in every ~17. Doing it during a lull instead
-        moves that spike off the conversation entirely.
+        Called after the verbatim window is trimmed, which changes the front of
+        the prompt and costs a full re-prefill — a couple of seconds landing on
+        one unlucky turn. Doing it in a lull moves that off the conversation.
 
-        No generation prompt: the next real turn appends a user message first,
-        so the assistant header would not be a prefix of it.
+        No generation prompt: the next turn appends a user message first, so an
+        assistant header would not be a prefix of it.
         """
         if threading.current_thread() is not self._mlx_thread:
             return self._on_mlx(self.warm, messages)
@@ -381,17 +346,15 @@ class LLM:
 
     def stream_reply(self, messages: list[Message],
                      temp: Optional[float] = None) -> Iterator[str]:
-        """Blocking generator of text chunks; reuses the KV prefix (D4).
+        """Blocking generator of text chunks, reusing the KV prefix.
 
-        `temp` overrides the conversational sampler for one turn — drafting
-        wants a steadier hand than chat does.
+        `temp` overrides the sampler for one turn; drafting runs colder.
         """
         sampler = (self._sampler if temp is None
                    else make_sampler(temp=temp, top_p=config.LLM_TOP_P))
         prompt_ids = self._prompt_ids(messages)
-        # The lock is held for the whole generation — acquired on the first
-        # next(), released when the generator finishes or is closed by barge-in —
-        # so a re-prime or a background summary cannot land mid-flight.
+        # Held for the whole generation, so a re-prime or a background summary
+        # can't land mid-flight.
         with self._lock:
             common = _common_prefix(prompt_ids, self._cached_ids)
 
@@ -422,9 +385,8 @@ class LLM:
                     # The cache now physically holds prompt_ids + generated.
                     self._cached_ids = prompt_ids + generated
                 else:
-                    # Interrupted (generator closed by barge-in): the cache holds
-                    # tokens the user never fully heard — drop it so next turn does
-                    # a clean re-prefill (D3/D4).
+                    # Interrupted by barge-in: the cache holds tokens the user
+                    # never heard, so drop it and re-prefill next turn.
                     self.reset()
 
     async def astream(self, messages: list[Message],

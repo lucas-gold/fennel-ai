@@ -1,14 +1,12 @@
 """Image generation through mflux (FLUX.2 Klein 4B, 4-bit).
 
-Run as a subprocess, deliberately. Diffusion peaks at 8–12 GB — more than the
-language model — and doing that in-process would mean two MLX contexts fighting
-over unified memory on the one thread the LLM is pinned to. A subprocess gets
-its own allocator, and every byte is handed back when it exits, which is the
-only way to be sure the conversation is not left slower afterwards.
+Runs as a subprocess: diffusion peaks higher than the language model, and
+in-process it would mean two MLX contexts competing for unified memory on the
+thread the LLM is pinned to. A subprocess gets its own allocator and gives every
+byte back when it exits.
 
-The model is an ungated mirror on purpose: black-forest-labs/FLUX.1-schnell is
-gated behind a Hugging Face login, and Fennel's whole install story is that
-opening it is enough.
+The model is an ungated mirror, since a Hugging Face login would break the
+install story.
 """
 from __future__ import annotations
 
@@ -28,29 +26,20 @@ MODEL_REPO = "Runpod/FLUX.2-klein-4B-mflux-4bit"
 BASE_MODEL = "flux2-klein-4b"
 MODEL_BYTES = 4_620_000_000
 
-#: What generation actually costs the machine, measured on an M2 as the rise in
-#: memory in use while it runs.
-#:
-#: Not the figure mflux prints. It reports "Peak MLX memory: 7.96 GB" for the
-#: same run that costs 3.1 GB of real memory — that number counts transient
-#: allocations which never coexist as resident pages. Sizing the decision below
-#: on it made Fennel unload the language model when there was ample room.
+#: What generation costs the machine, measured on an M2 as the rise in memory
+#: in use while it runs. Not the figure mflux prints, which counts transient
+#: allocations that never coexist as resident pages.
 #: 768px in low-RAM mode.
 PEAK_LOWRAM_BYTES = 4_200_000_000
-#: 1024px at full tilt — also measured, after an estimate of 5.0 GB scaled from
-#: mflux's own reporting turned out to be barely half the real figure. That
-#: estimate had generation choosing full size with about two gigabytes less
-#: headroom than it needed.
+#: 1024px at full size.
 PEAK_FULL_BYTES = 6_800_000_000
 
 _STEP = re.compile(r"(\d+)/(\d+)\s*\[")
 
-#: Running renders, by card id, so dismissing a card can stop the work rather
-#: than leaving a minute of computation running for a picture nobody wants.
+#: Running renders by card id, so dismissing a card can stop the work.
 _procs: dict = {}
 #: Cards dismissed before their render began. A queued picture has no process
-#: to kill, so cancelling it has to be remembered until its turn comes round —
-#: otherwise dismissing the second of two just delayed it by a minute.
+#: to kill, so the cancellation is remembered until its turn comes round.
 _cancelled: set = set()
 _procs_lock = threading.Lock()
 
@@ -74,11 +63,10 @@ class Cancelled(Exception):
 
 
 def images_dir() -> str:
-    """Where finished pictures live until the user wants one.
+    """Where finished pictures live until the user saves one.
 
-    The app's own folder, not Downloads: every picture landing in Downloads
-    uninvited is clutter, and most of them are a look rather than a keeper. The
-    card has a download button for the ones worth keeping.
+    The app's own folder rather than Downloads; the card has a save button for
+    the ones worth keeping.
     """
     path = os.path.join(APP_DIR, "images")
     os.makedirs(path, exist_ok=True)
@@ -92,23 +80,18 @@ def filename_for(title: str, card_id: str) -> str:
 
 
 def installed() -> bool:
-    """Whether the diffusion weights are downloaded — all of them.
+    """Whether the diffusion weights are downloaded, all of them.
 
-    A half-finished fetch leaves real files behind, and counting those as
-    installed had the picker skip the download and the first picture pay for it
-    instead.
+    A half-finished fetch leaves real files behind, which would otherwise count
+    as installed.
     """
     from voice.setup import complete
     return complete(MODEL_REPO, MODEL_BYTES)
 
 
 def download(progress: Optional[Callable[[int, int], None]] = None) -> None:
-    """Fetch the diffusion weights.
-
-    Called when the model is chosen, not when the first picture is asked for:
-    a minute's wait for a picture is expected, four gigabytes of download in the
-    middle of it is not.
-    """
+    """Fetch the diffusion weights, when the model is chosen rather than when
+    the first picture is asked for."""
     import threading as _t
     from huggingface_hub import snapshot_download
     from voice.setup import _cache_bytes
@@ -203,8 +186,7 @@ def generate(prompt: str, out_path: str, *, pixels: int = 1024,
         for line in proc.stdout:
             tail.append(line)
             del tail[:-40]
-            # Sample while it runs: the cost is gone by the time it exits, and
-            # reading it afterwards reported zero.
+            # Sample while it runs; the cost is gone by the time it exits.
             peak[0] = max(peak[0], sysmem.snapshot(0)["child_bytes"])
             if progress is None:
                 continue
