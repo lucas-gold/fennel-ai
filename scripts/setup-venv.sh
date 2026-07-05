@@ -1,11 +1,7 @@
 #!/usr/bin/env bash
-# Reproducible backend Python env.
-#
-# Why uv and not Homebrew python + pip: on macOS 26, Homebrew's python@3.12
-# ships a broken pyexpat (links a newer expat symbol than the system
-# libexpat.1.dylib exports). That breaks plistlib (so platform.mac_ver()
-# returns ''), which in turn crashes pip's vendored truststore. uv ships its
-# own self-contained CPython, sidestepping all of it.
+# Create the backend Python environment.
+# uv rather than Homebrew python: Homebrew's python@3.12 on macOS 26 has a
+# broken pyexpat, which takes plistlib and pip's truststore down with it.
 set -euo pipefail
 cd "$(dirname "$0")/../backend"
 
