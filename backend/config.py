@@ -1,4 +1,4 @@
-"""Every tunable knob. RAM-based tiering affects KV depth only (reference D11)."""
+"""Every tunable knob."""
 from __future__ import annotations
 
 import os
@@ -18,7 +18,7 @@ def _total_ram_gb() -> float:
 
 
 def select_tier() -> str:
-    """'small' or 'large'. Force with HER_TIER. Tier sets KV growth only."""
+    """'small' or 'large', from physical RAM. Override with HER_TIER."""
     forced = os.environ.get("HER_TIER")
     if forced in {"small", "large"}:
         return forced
@@ -27,29 +27,20 @@ def select_tier() -> str:
 
 TIER = select_tier()
 
-# Only KV-cache growth differs by tier (reference D11); models are identical.
+# Tier changes how much history is kept, not which models run.
 VERBATIM_TURNS = 8 if TIER == "large" else 4
 MAX_TOKENS = 1024 if TIER == "large" else 512
 
-# ── LLM (Stage 1) ──────────────────────────────────────────────────────────
-# Verified real repo (the design's "Qwen3.5-4B-VL" was an unverified guess).
-# Text-only for now; swap to a VL variant at the video phase — a config change,
-# per docs/DECISIONS.md D9.
-# The models the user can pick between on the startup screen. Kept deliberately
-# boring: every one is a single-quant MLX repo with no subdirectories, an
-# architecture mlx-lm already handles, and no reasoning block left open — so
-# choosing between them costs no code beyond this table.
+# ── Language models ────────────────────────────────────────────────────────
+# The picker's list. Each is a single-quant MLX repo with no subdirectories and
+# an architecture mlx-lm handles, so adding one costs nothing but a row here.
 #
-# `tools` records whether the model's chat template actually renders the
-# `tools=` argument. Several well-known models silently ignore it, which drops
-# all thirteen tools without an error, so it is measured rather than assumed
-# (see scripts/vet-models.py) and shown as a warning on the picker.
+# `tools` is whether the chat template renders the `tools=` argument. Some
+# models accept it and render nothing, dropping every tool silently, so it is
+# measured by scripts/vet-models.py rather than assumed.
 #
-# `bytes` is the download, measured from the repo tree, and also a fair estimate
-# of what the weights occupy once loaded — a 4-bit safetensors file is mapped
-# largely as-is. What Fennel costs *besides* the model is measured at runtime and
-# stated once in the picker's header, rather than added into every row, which
-# counted it seven times over.
+# `bytes` is the download size, which is also close to what the weights occupy
+# once loaded. What Fennel costs besides the model is measured at runtime.
 MODELS: list[dict] = [
     {"id": "mlx-community/Qwen3-1.7B-4bit",
      "name": "Light", "detail": "Qwen3 · 1.7B",
@@ -176,114 +167,90 @@ LLM_SYSTEM = (
     "Emoji rarely, and at most one — they are silent when read aloud, and one "
     "in every reply reads as a tic. Vary which one; never lean on a favourite."
 )
-# Prose needs far more room than talk: 1024 tokens is ~750 words, which cut
-# every scene off mid-sentence. Still a ceiling rather than none, because a
-# model whose stop token is misconfigured will otherwise generate until the
-# heat death of the session (see LLM._ensure_turn_end_stops).
+# Room for prose, but still a ceiling: a model with a misconfigured stop token
+# would otherwise run to exhaustion (see LLM._ensure_turn_end_stops).
 LLM_MAX_TOKENS = 3072 if TIER == "large" else 1536
 
-# mlx-lm defaults to greedy decoding (sampler=None -> argmax), which is why the
-# same question produced a byte-identical answer every time, always the shortest
-# safe phrasing, and always the same emoji. Sampling fixes all three.
-# No repetition penalty on purpose: it distorts the repeated quotes and braces in
-# tool-call JSON, and cross-turn repetition is a greedy problem, not a loop.
+# Sampled rather than greedy — mlx-lm's default argmax gives the same answer to
+# the same question every time. No repetition penalty: it mangles the repeated
+# braces and quotes in tool-call JSON.
 LLM_TEMP = 0.7
 LLM_TOP_P = 0.92
-# Drafting is the one task where 0.7 measurably hurts. Asked to write the same
-# email twice at 0.7, one sample wished the *recipient* well at a wedding the
-# sender was attending; at 0.3 neither sample lost the premise. Conversation
-# keeps the higher temperature — dropping it globally is what made replies
-# repetitive in the first place.
+# Drafting an email or a message runs colder; 0.7 loses details from the brief.
 LLM_DRAFT_TEMP = 0.3
 
-# Ceiling on MLX's reusable-buffer pool, or None to leave it unbounded.
-#
-# The cap exists because the pool grew to 3.96 GB beside 2.91 GB of live weights
-# while priming the 4B, and a 3.5 GB app that swaps is a slow one. It is pure
-# optimisation either way: capping trades allocation speed for headroom.
-# Unbounded is the deliberate choice here — set this back to
-#     int(max(0.5, min(1.5, _total_ram_gb() / 8)) * 1024**3)
-# to restore the cap. Note it applies to whichever model is selected above.
+# Ceiling on MLX's reusable-buffer pool; None leaves it unbounded. The pool is
+# pure optimisation, so a cap trades allocation speed for headroom — try
+# int(max(0.5, min(1.5, _total_ram_gb() / 8)) * 1024**3) on a tight machine.
 MLX_CACHE_LIMIT_BYTES = None
 
-# ── Tool calling / home screen (Stage 3) ───────────────────────────────────
-# How many times a turn may go LLM → tool → LLM before we force a plain reply.
-# 2 covers "remind me X and put Y on my calendar"; more invites runaway loops.
+# ── Tool calling ───────────────────────────────────────────────────────────
+# How many LLM → tool → LLM rounds a turn may take. 2 covers "remind me X and
+# put Y on my calendar"; more invites loops.
 LLM_TOOL_ROUNDS = 2
-# How long the conversation must be quiet before the rolling summary runs. It
-# holds the LLM lock for seconds, so it waits for a genuine pause instead of
-# firing the instant a turn ends and blocking whatever the user says next.
+# Quiet time before the rolling summary runs. It holds the LLM lock for
+# seconds, so it waits for a real pause rather than the end of a turn.
 SUMMARY_IDLE_S = 25
-# The app performs the real EventKit write and reports back. We wait this long
-# so the spoken confirmation reflects what actually happened (including a
-# permission denial) — EventKit writes take ~ms, so this only bites on failure.
+# How long to wait for the app to confirm a side effect, so the spoken reply
+# matches what happened. EventKit writes take milliseconds; this bites on
+# failure, not success.
 TOOL_APP_TIMEOUT_S = 2.0
-# After the web-search key is refused (quota or auth), stop calling out for this
-# long rather than retrying into a wall. Free allowances reset, so it is a
-# cooldown rather than a permanent switch-off.
+# How long to stop calling out after the web-search key is refused. A cooldown
+# rather than a switch-off, since free allowances reset.
 WEB_QUOTA_COOLDOWN_S = 6 * 3600
 
-# ── STT / TTS (Stage 2) ────────────────────────────────────────────────────
-# small.en ~300ms vs turbo's ~2.2s here (D9 revisited: turbo's accuracy edge
-# wasn't worth 7x the latency on clean English). base.en (~90ms) if you want
-# it even snappier and can accept a bit more error.
+# ── Speech ─────────────────────────────────────────────────────────────────
+# small.en transcribes in ~300 ms against turbo's ~2.2 s, for a small accuracy
+# cost on clean English. base.en is ~90 ms if you want it snappier still.
 STT_MODEL = "mlx-community/whisper-small.en-mlx"
 TTS_MODEL = "mlx-community/Kokoro-82M-4bit"
-TTS_VOICE = "af_heart"  # check per-voice CC-BY before shipping (SHIPPING.md)
+TTS_VOICE = "af_heart"
 TTS_SPEED = 1.15        # Kokoro speed; >1 speaks faster
 
-# Clause splitter (D5): greedy first fragment, then ramp up.
-# The ramp matters — going straight from 18 to 90 chars left an audible gap a
-# second in: the 18-char clause is only ~1.1 s of speech but the 90-char one
-# takes ~1.4 s to synthesise, so playback drained before it arrived. Each step
-# must buy enough playing time to cover synthesising the next.
+# Clause lengths for speech: a short first fragment so audio starts sooner,
+# then a ramp. Each step has to buy enough playing time to synthesise the next,
+# so widening the gap between them opens an audible pause.
 CLAUSE_FIRST_CHARS = 18   # smaller = first audio starts sooner
 CLAUSE_SECOND_CHARS = 45
 CLAUSE_REST_CHARS = 90
 
-# ── Embeddings / retrieval (Stage 5) ───────────────────────────────────────
-# MIT-licensed (D-DISTRIB), 33M params, 384 dims. Hand-rolled encoder in
-# voice/embed.py so no extra dependency ships with it.
+# ── Embeddings ─────────────────────────────────────────────────────────────
+# 33M params, 384 dims. The encoder is hand-rolled in voice/embed.py so no
+# extra dependency ships with it.
 EMBED_MODEL = "BAAI/bge-small-en-v1.5"
 EMBED_MAX_TOKENS = 256
 
 # ── Daily briefing (opt-in; the only networked feature) ────────────────────
-# The briefing lives in the PRIMED PREFIX, so it costs nothing per turn — but a
-# longer prefix does slow decode (measured 24 -> 21 tok/s at ~1300 tokens), so
-# it is budgeted. ~2400 chars is roughly 600 tokens.
-# Headline budget only — the weather block is exempt, since an hour-by-hour
-# forecast is ~800 chars and would otherwise crowd out every headline.
+# The briefing sits in the primed prefix, so it costs nothing per turn — but a
+# longer prefix slows decode, hence the budget. Headlines only; the weather
+# block is exempt or an hourly forecast would crowd them all out.
 BRIEFING_MAX_CHARS = 2400
-# Everything fetched is archived for retrieval even if it didn't fit the prefix.
-# Pruned so storage is bounded: ~150 KB/day of vectors, so a year is ~50 MB.
+# Everything fetched is archived for retrieval even when it didn't fit the
+# prefix. Pruned to keep storage bounded — about 150 KB of vectors a day.
 ARCHIVE_KEEP_DAYS = 120
-# Cosine floor, and the gate that decides whether to retrieve at all. Measured
-# separation on real feeds: on-topic queries score 0.55-0.66, off-topic 0.42-0.46.
-# Below the floor we inject NOTHING — noise costs prefill and misleads the model.
+# Cosine floor, and the gate on whether to retrieve at all. On real feeds
+# on-topic queries score 0.55-0.66 and off-topic 0.42-0.46. Below the floor
+# nothing is injected: noise costs prefill and misleads the model.
 RETRIEVAL_MIN_SCORE = 0.58
 RETRIEVAL_TOP_K = 2
-# Conversation recall is held to a higher bar than news: most turns genuinely
-# have no relevant past, and a weak "match" was costing 60+ tokens of prefill
-# per turn to inject things like "how are you".
+# Recall is held to a higher bar than news. Most turns have no relevant past,
+# and a weak match spends prefill on things like "how are you".
 RECALL_MIN_SCORE = 0.62
-# Hard cap on retrieved context per turn. This is the number that keeps latency
-# constant as the archive grows — never raise it to "fit more in".
+# Hard cap on retrieved context per turn. This is what keeps latency flat as
+# the archive grows.
 RETRIEVAL_MAX_CHARS = 450
 
-# ── VAD / endpointing (Stage 2) ────────────────────────────────────────────
-# Latency hides in turn-taking, not the models — tune END_SILENCE_MS first (D2).
-# Absolute so it resolves no matter the working directory the server is launched from.
+# ── Voice activity detection ───────────────────────────────────────────────
+# Turn-taking is where the latency is; END_SILENCE_MS is the knob that matters.
+# The path is absolute so it resolves whatever directory the server starts in.
 VAD_MODEL = os.path.join(os.path.dirname(os.path.abspath(__file__)), "models", "silero_vad.onnx")
 FRAME_SAMPLES = 512      # 32 ms @16 kHz — the Silero v5 window (== client frame)
 VAD_THRESHOLD = 0.5
 END_SILENCE_MS = 350     # silence before "you're done"; lower = snappier, too low cuts you off
 MIN_SPEECH_MS = 200      # ignore blips shorter than this
-# Barge-in while the assistant is talking is held to a much higher bar. Voice
-# processing cancels most of the speaker feed, but the residue was enough to
-# make it interrupt itself; requiring a high probability *sustained* over ~200 ms
-# rejects leaked echo while a real interruption still lands in well under a
-# second. Applies for the whole time audio is actually playing, not just while
-# the backend is still generating it.
+# Interrupting while the assistant speaks needs a high probability sustained
+# over ~200 ms, which rejects echo leaking back through the speakers while a
+# real interruption still lands quickly. Applies whenever audio is playing.
 BARGE_IN_THRESHOLD = 0.85
 BARGE_IN_MIN_MS = 200
 PREROLL_FRAMES = 5       # ~160 ms kept before onset so the first word isn't clipped
