@@ -1,9 +1,7 @@
 """Local WebSocket server.
 
-Stage 2: full voice loop through `voice/session.py`. Text control frames carry
-state/tokens/tool calls; binary frames carry audio — mic in (int16 mono 16 kHz,
-512-sample frames), audio out (">II" header + int16 PCM @24 kHz). The typed
-chat box still works and now also speaks its reply.
+Runs the voice loop in voice/session.py and the model picker. Text frames carry
+state, tokens and tool calls; binary frames carry audio. See protocol.py.
 """
 from __future__ import annotations
 
@@ -31,9 +29,8 @@ from voice.stt import WhisperSTT
 from voice.tools import system_prompt, tool_list
 from voice.tts import KokoroTTS
 
-# Bound to None rather than merely annotated: an annotation creates no name, so
-# the "have we loaded this already?" checks that let a cancelled load skip the
-# model-independent work raised NameError instead.
+# Bound to None so the "already loaded?" checks can read them before a
+# model exists; a bare annotation creates no name.
 _stt: Optional[WhisperSTT] = None
 _llm: Optional[LLM] = None
 _tts: Optional[KokoroTTS] = None
@@ -45,9 +42,10 @@ _system_day: date
 
 
 def _build_system() -> str:
-    """Persona + tools + day table, plus today's briefing when the user has
-    opted in. All of it is stable for the whole day, which is exactly what makes
-    it primeable — see D-BRIEFING."""
+    """Persona, tools, day table, and today's briefing if the user opted in.
+
+    Stable for the whole day, which is what makes it primeable.
+    """
     base = system_prompt(config.LLM_SYSTEM)
     if brief := _briefing.cached():
         return f"{base}\n\n{brief}"
@@ -83,55 +81,47 @@ async def _refresh_briefing(session: Session) -> None:
     global _system, _system_day
     if _briefing.is_stale():
         await asyncio.to_thread(_briefing.build, embed.shared())
-    # NB: do not touch _llm.tools before the comparison below — assigning here
-    # first made "want_tools == _llm.tools" trivially true, so a toggled feature
-    # never re-primed and the prefix on the KV cache no longer matched the tools
-    # being sent.
-    # Re-prime whenever the prefix we *want* differs from the one that's primed,
-    # not merely when the fetch was stale: toggling "daily updates" on mid-run
-    # leaves a perfectly fresh briefing sitting outside the prefix otherwise.
+    # Re-prime when the prefix we want differs from the one that's primed, not
+    # merely when the fetch was stale — toggling daily updates on mid-run leaves
+    # a fresh briefing sitting outside the prefix otherwise.
+    #
+    # Don't assign _llm.tools before the comparison, or it compares equal to
+    # itself and a toggled feature never re-primes.
     want = _build_system()
     want_tools = tool_list(_feature_settings())
     if want == _system and want_tools == _llm.tools:
         return
     _system, _system_day = want, date.today()
-    # Tool availability lives in the primed prefix, so switching a feature on or
-    # off means re-priming — the same path the daily briefing already takes.
+    # Tool availability lives in the prefix, so a toggled feature means re-priming.
     _llm.tools = want_tools
-    # Hand the session the new prefix BEFORE priming. A turn arriving during the
-    # prime blocks on the LLM lock either way, but this way it wakes up using the
-    # new prefix on a warm cache rather than the stale one.
+    # Give the session the new prefix before priming, so a turn arriving during
+    # the prime wakes up on the new one rather than the stale one.
     await session.apply_system(_system)
     await asyncio.to_thread(_llm.prime, _system)
     print("[briefing] folded into the primed prefix", flush=True)
 
 
-# First-run state, shared by every connection. The server starts listening
-# BEFORE the models load so the app can show a consent screen and a progress
-# bar; nothing touches the network until `_consent` is set from the UI.
+# First-run state, shared by every connection. The server listens before the
+# models load so the app can show a consent screen and a progress bar;
+# nothing touches the network until `_consent` is set from the UI.
 _clients: set = set()
-# Live Sessions, so a model swap can repoint them; each holds a direct
+# Live Sessions, so a model swap can repoint them — each holds a direct
 # reference to the LLM it was built with.
 _sessions: set = set()
 _consent = asyncio.Event()
 _ready = asyncio.Event()
-# The startup model picker. Shown every launch, because which model is
-# loaded is the single biggest thing about a session and picking it is
-# cheaper than discovering it. `_chosen_model` is set from the UI.
+# The model picker. `_chosen_model` is set from the UI.
 _model_chosen = asyncio.Event()
 _chosen_model: str = ""
-# Set from the loading screen. Loading happens on worker threads that
-# cannot be interrupted mid-step, so this is checked between steps: the
-# current step finishes, then the model is unloaded and the picker returns.
+# Set from the loading screen. Loads run on worker threads that can't be
+# interrupted mid-step, so this is checked between steps.
 _cancel_load = asyncio.Event()
-# Measured once a model is up: how much of MLX's allocation is the LLM,
-# and therefore how much of the process is everything else — Whisper,
-# Kokoro, the embedder and the Python runtime. Shown on the picker so the
-# RAM arithmetic there is the machine's, not a guess.
+# Measured once a model is up: the LLM's share of MLX, and therefore what the
+# rest of the process costs — Whisper, Kokoro, the embedder, the runtime.
 _llm_bytes = 0
 _overhead_bytes = 0
-# Process size before a single model is loaded: the Python runtime and
-# the app's own footprint, which no model is responsible for.
+# Process size before any model loads: the runtime and the app's own
+# footprint, which no model is responsible for.
 _base_rss = 0
 
 
@@ -148,9 +138,7 @@ _setup_state: dict = {"phase": "checking"}   # fields only; "type" is added on s
 def _settings_payload() -> dict:
     """The settings the app mirrors, including which model is answering.
 
-    Factored out because it is needed in three places now: on connect, after a
-    Save, and after a model switch — that last one was missing, so the chip by
-    the orb went on naming the model that had just been unloaded.
+    Sent on connect, after a Save, and after a model switch.
     """
     return {
         "daily_updates": _briefing.enabled,
@@ -174,10 +162,10 @@ async def _broadcast(msg: str) -> None:
 
 
 def _set_setup(**fields) -> None:
-    """Record setup state and push it to every connected client.
+    """Record setup state and push it to every client.
 
-    Always called on the event loop — the download reporter runs on a worker
-    thread and marshals through `call_soon_threadsafe` before getting here.
+    Must be called on the event loop; the download reporter marshals through
+    `call_soon_threadsafe` to get here.
     """
     global _setup_state
     _setup_state = dict(fields)
@@ -197,14 +185,11 @@ async def handler(ws) -> None:
     _clients.add(ws)
     await ws.send(P.encode("setup", **_setup_state))
     if not _ready.is_set():
-        # Models aren't loaded yet: serve only the setup conversation until they
-        # are, so the app can ask for consent and draw a progress bar instead of
-        # showing a window that looks alive but answers nothing.
+        # Until the models are loaded, serve only the setup conversation, so the app
+        # can ask for consent and draw a progress bar.
         #
-        # Readiness is awaited as an Event *alongside* reading the socket. A
-        # plain `async for` here only noticed the models were ready when the app
-        # happened to send something — so after loading, the window showed an
-        # empty chat that filled in only once the user typed.
+        # Readiness is awaited as an Event alongside reading the socket: a plain
+        # `async for` only notices it when the app happens to send something.
         async def pump() -> None:
             async for raw in ws:
                 if isinstance(raw, (bytes, bytearray)):
@@ -285,9 +270,8 @@ async def handler(ws) -> None:
         ready_task = asyncio.create_task(_ready.wait())
         done, _pending = await asyncio.wait(
             {pump_task, ready_task}, return_when=asyncio.FIRST_COMPLETED)
-        # Await the cancellation, don't just request it: websockets refuses a
-        # second concurrent recv, and the pump keeps its slot until the
-        # CancelledError has actually been delivered.
+        # Await the cancellation rather than just requesting it — websockets refuses
+        # a second concurrent recv until the CancelledError has been delivered.
         for t in (pump_task, ready_task):
             if not t.done():
                 t.cancel()
@@ -302,9 +286,8 @@ async def handler(ws) -> None:
     session._on_need_memory = _lend_memory
     _sessions.add(session)
     await ws.send(P.encode("state", value="idle"))
-    # Push stored settings immediately. Without this the app boots showing its
-    # own defaults (all off) while the backend has them on — and the next Save
-    # writes those stale defaults back over the real ones.
+    # Push stored settings immediately, or the app shows its own defaults and the
+    # next Save writes those back over the real ones.
     await ws.send(P.encode("settings", **_settings_payload()))
     await session.open_session()          # resume where the user left off
     asyncio.create_task(_refresh_briefing(session))  # never blocks the conversation
@@ -328,8 +311,8 @@ async def handler(ws) -> None:
                         _store.set_setting("lookups", "1" if w else "0")
                     if (g := msg.get("images")) is not None:
                         _store.set_setting("images", "1" if g else "0")
-                    # The key arrives from the app's Keychain. "" clears it, and
-                    # a new key clears the quota pause so it is tried again.
+                    # The key comes from the app's Keychain. "" clears it, and a new key clears
+                    # the quota pause so it is tried again.
                     if (k := msg.get("web_key")) is not None:
                         _store.set_setting("web_key", str(k).strip())
                         _store.set_setting("web_quota_hit", "")
@@ -344,9 +327,8 @@ async def handler(ws) -> None:
                 elif msg["type"] == "session_delete":
                     await session.delete_session(int(msg["id"]))
                 elif msg["type"] == "model_select":
-                    # The same frames the startup gate handles, because the
-                    # picker can be reopened from the composer once the app is
-                    # running and its buttons must keep working there too.
+                    # The same frames the startup gate handles: the picker is reachable from the
+                    # composer once the app is running.
                     global _chosen_model
                     _chosen_model = str(msg.get("id", ""))
                     _model_chosen.set()
@@ -402,12 +384,8 @@ async def handler(ws) -> None:
                                note="" if row.get("ok")
                                     else "; ".join(row.get("problems", [])))
                 elif msg["type"] == "model_unload":
-                    # Free the resident model without choosing another. The
-                    # picker offers this so "in use" can be made untrue: on a
-                    # 24 GB machine you may want the RAM back before deciding.
-                    #
-                    # Say so first: freeing a 12B takes seconds, and with no
-                    # frame until it finished the x looked broken.
+                    # Free the resident model without choosing another. Announced first, since
+                    # freeing a 12B takes long enough for the button to look dead.
                     _set_setup(phase="choose_model", **_picker_fields(),
                                current=config.LLM_MODEL,
                                note=f"Unloading {config.model_info(config.LLM_MODEL)['name']}…")
@@ -417,15 +395,11 @@ async def handler(ws) -> None:
                 elif msg["type"] == "card_forget":
                     _store.forget_card(str(msg.get("id", "")))
                 elif msg["type"] == "card_cancel":
-                    # Dismissing a picture stops the work as well as hiding the
-                    # card — a minute of computation for something the user has
-                    # just said they do not want is pure waste.
+                    # Dismissing a picture stops the render as well as hiding the card.
                     image_gen.cancel(str(msg.get("id", "")))
                 elif msg["type"] == "model_reopen":
-                    # Back to the picker without leaving the app. Nothing is
-                    # unloaded yet: choosing the same model again should cost
-                    # nothing at all, so the swap only happens once a different
-                    # one is actually confirmed.
+                    # Back to the picker without leaving the app. Nothing is unloaded yet, so
+                    # choosing the same model again costs nothing.
                     asyncio.create_task(_switch_model())
                 elif msg["type"] == "ping":
                     await ws.send(P.encode("pong"))
@@ -439,15 +413,12 @@ async def main() -> None:
     global _stt, _llm, _tts, _store, _memory, _briefing, _system, _system_day
     _store = Store()
     _briefing = Briefing(_store)
-    # Embeddings power both news retrieval and conversational recall; loading is
-    # lazy and optional, so a failure degrades to keyword search (embed.shared).
-    # NB: the embedder is NOT constructed here. Loading it downloads bge-small,
-    # which would put ~130 MB on the wire before the user has been asked
-    # anything — measured, and exactly the promise this screen exists to keep.
-    # It is built in _prepare_models, after consent.
+    # The embedder is built in _prepare_models, not here: constructing it
+    # downloads bge-small, which would put ~130 MB on the wire before the user
+    # has been asked anything. A failure to load it degrades to keyword search.
 
-    # Listen FIRST. The app needs a connection to ask about downloading, and a
-    # window that can't reach its backend is indistinguishable from a broken one.
+    # Listen first: the app needs a connection to ask about downloading, and a
+    # window that can't reach its backend looks broken.
     async with websockets.serve(handler, config.HOST, config.PORT, max_size=None):
         print(f"Fennel backend listening on ws://{config.HOST}:{config.PORT}  "
               f"(tier={config.TIER})", flush=True)
@@ -458,11 +429,8 @@ async def main() -> None:
         try:
             await _prepare_models()
         except Exception as exc:
-            # Keep serving. Startup failures used to propagate out of
-            # asyncio.run and kill the process, and a dead backend is
-            # indistinguishable from a slow one: the window sat on "Any moment
-            # now…" forever. Staying up long enough to say what broke is the
-            # whole difference between a bug report and a mystery.
+            # Keep serving so the failure can be reported. A dead backend is
+            # indistinguishable from a slow one from the window's side.
             traceback.print_exc()
             _set_setup(phase="failed",
                        detail=f"Couldn't start the model: {exc}")
@@ -472,17 +440,16 @@ async def main() -> None:
 async def _broadcast_memory() -> None:
     """Push the memory picture while anyone is watching.
 
-    Two numbers matter and neither is the process RSS: what MLX is holding
-    (which is what changes when you switch model) and how much of the machine
-    is spoken for (which is what decides whether the next one will fit).
+    What MLX holds, and how much of the machine is spoken for. Neither is the
+    process RSS, which understates both.
     """
     while True:
         await asyncio.sleep(2)
         if not _clients:
             continue
-        # Fall back the same way the picker does: during a load the real
-        # figure has not been taken yet, and reporting zero made the loading
-        # screen quote the model alone while the chat quoted everything.
+        # Fall back the same way the picker does: during a load the real figure has
+        # not been taken yet, and zero would have the loading screen quote the model
+        # alone while the chat quotes everything.
         snap = dict(sysmem.snapshot(0), llm_bytes=_llm_bytes,
                     overhead_bytes=(_overhead_bytes
                                     or int(_store.setting("overhead_bytes", "0") or 0)
@@ -493,10 +460,9 @@ async def _broadcast_memory() -> None:
 async def _watch_parent() -> None:
     """Exit if the app that launched us goes away.
 
-    A force-quit or crash skips `BackendProcess.stop()`, leaving an orphaned
-    backend holding port 8420 — and the next launch then fails to bind and sits
-    on the loading screen forever. Only armed when the app passes its pid, so a
-    backend started by hand from a terminal is unaffected.
+    A force-quit skips BackendProcess.stop(), and an orphan holding port 8420
+    stops the next launch binding. Only armed when the app passes its pid, so a
+    backend started from a terminal is unaffected.
     """
     parent = os.environ.get("FENNEL_PARENT_PID")
     if not parent or not parent.isdigit():
@@ -512,13 +478,11 @@ async def _watch_parent() -> None:
 
 
 async def _switch_model() -> None:
-    """Reopen the picker mid-session, and swap the model if a different one is
-    chosen.
+    """Reopen the picker, and swap the model if a different one is chosen.
 
-    Deliberately lazy: the running model stays in memory while the picker is up,
-    so reopening it and choosing the same row costs nothing. Only a genuine
-    change unloads, and it unloads *before* loading the replacement — on a 24 GB
-    machine two sets of weights do not fit at once.
+    The running model stays in memory while the picker is up, so choosing the
+    same row again costs nothing. A real change unloads before loading the
+    replacement; two sets of weights don't fit at once.
     """
     global _chosen_model
 
@@ -534,10 +498,9 @@ async def _switch_model() -> None:
     await _model_chosen.wait()
     pick = _chosen_model or was
 
-    # Keeping the same model is free — unless something else still has to be
-    # fetched. Choosing an already-loaded model with image generation newly
-    # switched on used to return straight to the chat, skipping the download
-    # entirely, and the first picture then paid for it.
+    # Keeping the same model is free unless something else still has to be
+    # fetched — image generation may have been switched on while the picker was
+    # up, and that download happens here.
     images_pending = ((_store.setting("images", "1") or "1") == "1"
                       and not image_gen.installed())
     if pick == was and _llm is not None and not images_pending:
@@ -554,9 +517,8 @@ async def _switch_model() -> None:
     _set_setup(phase="loading",
                detail=f"Unloading {config.model_info(was)['name']}", loaded="")
     await _drop_llm()
-    # Same loop as first boot, so Cancel behaves identically here: it drops the
-    # half-loaded model and puts the picker back, rather than leaving the app
-    # with no model at all.
+    # Same loop as first boot, so Cancel drops the half-loaded model and returns
+    # to the picker rather than leaving the app with no model at all.
     await _choose_and_load(already_chosen=True)
     for sess in list(_sessions):
         sess.rebind_llm(_llm)
@@ -570,18 +532,10 @@ async def _prepare_models() -> None:
 async def _choose_and_load(already_chosen: bool = False) -> None:
     """Settle on a model and load it, returning to the picker if cancelled.
 
-    Shared by first boot and by switching from the chat, so Cancel behaves the
-    same in both: it drops whatever had loaded and puts the picker back, rather
-    than leaving the app running with no model at all.
-
-    `already_chosen` says the user has just picked and must not be asked again.
-    Without it the loop treated "not on disk yet" as "still needs choosing", so
-    choosing a model that had to be downloaded bounced straight back to the
-    picker instead of downloading it.
-
-    On first boot nobody has chosen, and the picker is skipped only when last
-    launch's model is still on disk — it is reachable from the chat, so passing
-    through it every launch was a toll rather than a choice.
+    Shared by first boot and by switching from the chat. `already_chosen` means
+    the user has just picked and must not be asked again — otherwise a model
+    that needs downloading would be mistaken for one still to be chosen. On
+    first boot the picker is skipped when last launch's model is still on disk.
     """
     global _chosen_model
     force_picker = False
@@ -597,10 +551,8 @@ async def _choose_and_load(already_chosen: bool = False) -> None:
             asked = True
             _model_chosen.clear()
             _chosen_model = ""
-            # The only place the cancel flag is reset. Clearing it before each
-            # load instead threw away a Cancel pressed while the old model was
-            # still unloading, which is exactly when it gets pressed — the
-            # button had no effect at all.
+            # The only place the cancel flag is reset. Clearing it before each load
+            # instead discards a Cancel pressed while the old model is still unloading.
             _cancel_load.clear()
             _set_setup(phase="choose_model", **_picker_fields(),
                        current=stored, note="")
@@ -624,10 +576,8 @@ async def _choose_and_load(already_chosen: bool = False) -> None:
 async def _release_if_resident(repo: str) -> None:
     """Unload `repo` if it is the model in memory, so it can be deleted.
 
-    The picker deliberately keeps the running model loaded, so that returning
-    to it costs nothing — which also made it permanently undeletable: it was
-    always "the one in use". Asking to delete it is a clear enough statement of
-    intent to unload it first.
+    The picker keeps the running model loaded, which would otherwise make it
+    permanently undeletable — it is always the one in use.
     """
     if repo and _llm is not None and repo == config.LLM_MODEL:
         print(f"[setup] releasing {repo} so it can be deleted", flush=True)
@@ -637,30 +587,25 @@ async def _release_if_resident(repo: str) -> None:
 def _resident_model() -> Optional[str]:
     """The model that is actually in memory, or None.
 
-    What delete has to protect is weights in use, not a stored preference. The
-    two delete paths disagreed about this — one asked whether setup had
-    finished, the other assumed the current model was always live — so removing
-    the model you had just downloaded was refused from the picker, where nothing
-    is loaded at all.
+    Delete protects weights in use, not a stored preference.
     """
     return config.LLM_MODEL if _llm is not None else None
 
 
 def _picker_fields() -> dict:
     """Everything the picker needs that is not a model row."""
-    # Uncached: this is sent right after an unload, and the whole point of that
-    # frame is to show the memory coming back.
+    # Uncached: this is sent right after an unload, and the point of that frame
+    # is to show the memory coming back.
     snap = sysmem.snapshot(0)
     overhead = (_overhead_bytes
                 or int(_store.setting("overhead_bytes", "0") or 0)
                 or config.OVERHEAD_ESTIMATE_BYTES)
     return {
         "models": model_setup.catalogue(),
-        # Which model is actually resident, as opposed to merely last chosen.
+        # Which model is resident, as opposed to merely last chosen.
         "loaded": config.LLM_MODEL if _llm is not None else "",
-        # The picture model rides along on the picker rather than hiding in the
-        # network panel: it is a model, it is 4.6 GB, and it belongs where the
-        # other models and the RAM arithmetic are.
+        # The picture model sits on the picker rather than in the network panel:
+        # it is a model, and this is where the RAM arithmetic is.
         "image_model": {
             "id": image_gen.MODEL_REPO,
             "name": "Image generation",
@@ -670,8 +615,8 @@ def _picker_fields() -> dict:
             "bytes": image_gen.MODEL_BYTES,
             "installed": image_gen.installed(),
             "enabled": (_store.setting("images", "1") or "1") == "1",
-            # Both measured. Which one applies depends on free memory at the
-            # time, so the card quotes the range rather than picking one.
+            # Both measured. Which applies depends on free memory at the time, so the
+            # card quotes the range.
             "peak_bytes": image_gen.PEAK_FULL_BYTES,
             "peak_low_bytes": image_gen.PEAK_LOWRAM_BYTES,
         },
@@ -683,12 +628,11 @@ def _picker_fields() -> dict:
 
 
 async def _lend_memory(release: bool) -> None:
-    """Unload the language model for the duration of something heavier, and
-    load it again afterwards.
+    """Unload the language model for something heavier, then load it again.
 
-    Image generation peaks above what the LLM leaves free on a 16 GB machine,
-    and swapping would cost far more than a reload — which, with the primed
-    prefix now cached per model, is seconds rather than a minute.
+    Image generation peaks above what the LLM leaves free on a 16 GB machine.
+    Swapping would cost more than the reload, which is seconds now the primed
+    prefix is cached per model.
     """
     global _llm
     if release:
@@ -725,11 +669,9 @@ async def _load_everything(chosen: dict, may_fetch_images: bool = False) -> None
     """
     global _stt, _llm, _tts, _memory, _system, _system_day
 
-    # The picture model, if it is switched on and not yet here. Downloaded with
-    # the rest rather than in the middle of the first request for a picture.
-    # Only after the picker. The switch is on by default, so a launch that goes
-    # straight to the chat — because last time's model is still on disk — was
-    # quietly fetching 4.6 GB nobody had asked for on that run.
+    # The picture model, if it is switched on and not yet here — and only on a
+    # pass where the choice was actually made. The switch is on by default, so a
+    # launch that goes straight to the chat must not fetch 4.6 GB unasked.
     if (may_fetch_images
             and (_store.setting("images", "1") or "1") == "1"
             and not image_gen.installed()):
@@ -749,8 +691,7 @@ async def _load_everything(chosen: dict, may_fetch_images: bool = False) -> None
         try:
             await asyncio.to_thread(image_gen.download, img_report)
         except Exception as exc:
-            # Not fatal: the language model is what Fennel is for. Pictures can
-            # be tried again later, and the tool reports its own failure.
+            # Not fatal — the tool reports its own failure if a picture is asked for.
             print(f"[image] download failed: {exc}", flush=True)
 
     if pending := model_setup.missing():
@@ -765,8 +706,7 @@ async def _load_everything(chosen: dict, may_fetch_images: bool = False) -> None
 
         def report(what: str, done: int, total: int) -> None:
             frac = 0.0 if total <= 0 else min(1.0, done / total)
-            # partial, not kwargs: call_soon_threadsafe forwards positional
-            # arguments only.
+            # partial, not kwargs: call_soon_threadsafe forwards positional args only.
             loop.call_soon_threadsafe(partial(
                 _set_setup, phase="downloading", progress=frac, size=size,
                 detail=f"Downloading {what} — "
@@ -781,16 +721,13 @@ async def _load_everything(chosen: dict, may_fetch_images: bool = False) -> None
                               "and reopen Fennel.")
             return
 
-    # Estimate from the last successful start; the first run has no history, so
-    # it gets a rough default and then records the real number for next time.
-    # Per model: a 3B and a 14B are a minute apart, so one shared estimate was
-    # wrong for both. First run of a given model has no history and gets a
-    # rough guess scaled by its size.
+    # Per model, from the last successful start. A 3B and a 14B are a minute
+    # apart, so one shared estimate was wrong for both; the first run of a model
+    # gets a guess scaled by its size and then records the real number.
     eta_key = f"startup_seconds:{config.LLM_MODEL}"
     eta = float(_store.setting(eta_key, "") or max(25.0, chosen["bytes"] / 1e9 * 12 + 25))
     started = time.monotonic()
-    # Weights go into unified memory one model at a time; naming each with its
-    # size is more informative than a spinner, and explains where the wait goes.
+    # Naming each model and its size explains where the wait goes.
     llm_gb = chosen["bytes"] / 1e9 or 2.3
     steps = [
         (f"{chosen['detail'] or chosen['name']} — the conversation", llm_gb),
@@ -817,10 +754,10 @@ async def _load_everything(chosen: dict, may_fetch_images: bool = False) -> None
     _before = sysmem.mlx_active()
     _llm = await asyncio.to_thread(LLM, config.LLM_MODEL)
     _llm_bytes = max(0, sysmem.mlx_active() - _before)
-    # Cancel cannot interrupt a load already running on a worker thread, so the
-    # step finishes and is thrown away here instead.
+    # Cancel can't interrupt a load already on a worker thread, so the step
+    # finishes and is discarded here.
     _check_cancel()
-    # Only once: these do not change with the model, and a cancelled load that
+    # Only once — these don't change with the model, and a cancelled load that
     # returns to the picker must not pay for them twice.
     loading(1)
     if _tts is None:
@@ -829,8 +766,8 @@ async def _load_everything(chosen: dict, may_fetch_images: bool = False) -> None
     if _stt is None:
         _stt = WhisperSTT()
     loading(3)
-    # Embeddings power both news retrieval and conversational recall; loading is
-    # lazy and optional, so a failure degrades to keyword search (embed.shared).
+    # Embeddings drive news retrieval and recall. Loading is lazy and optional;
+    # a failure degrades to keyword search.
     _emb = embed.shared()
     _memory = Memory(_store, Retriever(_store, _emb), _emb)
 
@@ -846,15 +783,13 @@ async def _load_everything(chosen: dict, may_fetch_images: bool = False) -> None
     if _briefing.is_stale():
         await asyncio.to_thread(_briefing.build, embed.shared())
     _llm.tools = tool_list(_feature_settings())
-    # Prefill tool schemas + day table + briefing now rather than during the
-    # user's first sentence — ~1600-2200 tokens of stable prefix (D4).
+    # Prefill the tool schemas, day table and briefing now rather than during
+    # the user's first sentence — 1600-2200 tokens of stable prefix.
     _system, _system_day = _build_system(), date.today()
 
-    # Priming happens before ready again. Backgrounding it only moved the wait
-    # onto the user's first question, which is worse — but it is no longer a
-    # wait: the primed KV state is restored from disk in ~0.06 s instead of the
-    # ~15 s it takes to recompute (D-PRIMECACHE). Only the first launch after
-    # the briefing changes pays the full cost.
+    # Primed before ready rather than in the background: restoring the KV state
+    # from disk takes about 0.06 s against ~15 s to recompute it, and only the
+    # first launch after the briefing changes pays the full cost.
     _check_cancel()
     _set_setup(phase="loading", detail="Preparing the conversation…",
                loaded=f"{total_gb:.1f} GB in memory",
