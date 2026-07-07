@@ -1,17 +1,14 @@
-"""Prompt-facing memory (D8): what the model is told it knows, and when.
+"""What the model is told it knows, and where in the prompt it is told.
 
-Three inputs, deliberately placed at three different depths in the prompt so
-each costs a prefill only as often as it actually changes (D4):
+Three inputs, at three depths, so each costs a prefill only as often as it
+changes:
 
-  facts + rolling summary  → one `<context>` message ahead of the window.
-                             Rebuilt only when the window is rebuilt, so the
-                             re-prefill it forces is one we were paying anyway.
-  recall + clock           → prepended to the *current* user message, the one
-                             position that is new every turn regardless.
-  verbatim turns           → the window itself, evicted in chunks rather than
-                             one turn at a time (see `window`), because sliding
-                             by one every turn would invalidate the whole
-                             cached prefix every turn.
+  facts + rolling summary  one <context> message ahead of the window, rebuilt
+                           only when the window is
+  recall + clock           prepended to the current user message, which is new
+                           every turn anyway
+  verbatim turns           the window itself, evicted in chunks — sliding by
+                           one turn would invalidate the cached prefix each time
 """
 from __future__ import annotations
 
@@ -26,8 +23,8 @@ from voice.store import Store
 
 Message = dict[str, str]
 
-# Words that make today's forecast relevant. Deliberately broad — a missed
-# mention costs a vaguer answer, an unwanted one costs the model's credibility.
+# Words that make today's forecast relevant. Broad on purpose: a missed mention
+# costs a vaguer answer, an unwanted one costs credibility.
 _WEATHERY = re.compile(
     r"\b(weather|forecast|rain|rains|raining|snow|snowing|sun|sunny|cloud|"
     r"cloudy|wind|windy|storm|humid|temperature|temp|degrees|hot|warm|cold|"
@@ -35,10 +32,10 @@ _WEATHERY = re.compile(
     r"sunscreen|wear|dress|walk|run|bike|cycle|beach|park|picnic|barbecue|"
     r"bbq|sunrise|sunset|nice out|going out)\b", re.I)
 
-# Questions whose answer changes week to week. Detected here rather than left to
-# the model: tuning the tool description got "what's on tonight" working and left
-# prices and scores still refusing, and each further nudge perturbed something
-# else. A line in the volatile block sits right beside the question and lands.
+# Questions whose answer changes week to week. Detected here rather than left
+# to the model — a line in the volatile block sits beside the question and
+# lands, where tuning the tool description reliably fixed one case and broke
+# another.
 _NEEDS_CURRENT = re.compile(
     r"\b(tonight|today|right now|currently|at the moment|this (?:week|weekend|"
     r"month|year)|latest|newest|recent|recently|news|headlines|happening|going "
@@ -94,10 +91,8 @@ class Memory:
     def _recall(self, session_id: int, query: str, k: int = 2) -> list[dict]:
         """Past conversations worth quoting — usually none.
 
-        This used to be raw FTS5, which returns *something* for any query at
-        all: "tell me a joke" was pulling in "how are you" and "what else is
-        new", costing 60+ tokens of prefill every turn to actively mislead the
-        model. Gated on cosine now, exactly like news retrieval (D-BRIEFING).
+        Gated on cosine like news retrieval. Raw FTS5 returns something for any
+        query at all, which spends prefill on turns that have no relevant past.
         """
         if self._embedder is None or len(query.split()) < 3:
             return []
@@ -132,12 +127,11 @@ class Memory:
     def preamble(self, session_id: int, user_text: str,
                  now: Optional[datetime] = None) -> str:
         """Prefix for the current user message. The clock is here rather than in
-        the system prompt so the primed prefix stays byte-identical (D-PREFIX)."""
+        the system prompt, so the primed prefix stays byte-identical."""
         now = now or datetime.now()
         parts = [f"time: {now.strftime('%-I:%M %p')}"]
-        # Only when the turn is plausibly about it. Present unconditionally, the
-        # model volunteered the forecast in reply to "hey what's up" — anything
-        # sitting in the context block reads as something worth saying.
+        # Only when the turn is plausibly about it: anything in the context
+        # block reads to the model as something worth mentioning.
         if _WEATHERY.search(user_text) and (w := self._weather_now(now)):
             parts.append(w)
         if self._web_ready and _NEEDS_CURRENT.search(user_text):
@@ -149,8 +143,8 @@ class Memory:
             text = " ".join(h["content"].split())[:160]
             parts.append(f"recall ({_ago(h['ts'], now)}, {who}): {text}")
 
-        # News archive. Gated and hard-capped: on most turns this adds nothing,
-        # which is what keeps per-turn latency flat as the archive grows.
+        # News archive, gated and hard-capped. On most turns it adds nothing,
+        # which keeps latency flat as the archive grows.
         if self._retriever is not None:
             budget = config.RETRIEVAL_MAX_CHARS
             for c in self._retriever.search(user_text, k=config.RETRIEVAL_TOP_K):
@@ -165,13 +159,11 @@ class Memory:
         return "<context>\n" + "\n".join(parts) + "\n</context>\n"
 
     def _weather_now(self, now: datetime) -> Optional[str]:
-        """Today's forecast row for the current hour, resolved here rather than
-        left to the model.
+        """Today's forecast row for the current hour.
 
-        The briefing carries all 24 rows, but a 4-bit 4B model would not match
-        the clock against them: it answered "the weather at 3pm" correctly and
-        "the weather now" with the overnight low, every time. One line of
-        arithmetic removes the inference entirely.
+        The briefing carries all 24 rows, but a small model matches the clock
+        against them badly — it reads "now" as the overnight low. Resolving it
+        here removes the inference.
         """
         if self._store.setting("weather_day") != date.today().isoformat():
             return None                    # stale; the briefing will refresh it
@@ -205,13 +197,11 @@ class Memory:
         for r in rows:
             text = r.get("prompt_text")
             if text is None:
-                # Written before D-REPLAY: the stored assistant text is the
-                # laundered reply with its tool call stripped out, so replaying
-                # it verbatim is a worked example of narrating an action instead
-                # of taking one. Measured on a real conversation: 16 such
-                # messages was enough to stop tool calling completely, while the
-                # same turn with these elided called the tool. The user still
-                # sees the original text in the chat; only the replay changes.
+                # Old rows stored only the visible reply, with the tool call
+                # stripped out. Replaying those verbatim teaches the model to
+                # narrate an action rather than take one, so they are elided.
+                # The chat still shows the original text; only the replay
+                # changes.
                 text = "(earlier reply)" if r["role"] == "assistant" else r["content"]
             out.append({"role": r["role"], "content": text})
         return out

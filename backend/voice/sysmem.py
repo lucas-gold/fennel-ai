@@ -1,10 +1,8 @@
-"""What Fennel and the Mac are actually holding.
+"""What Fennel and the Mac are holding.
 
-RSS is a poor answer to "how much is the model using": MLX maps weight files,
-so pages count against the process only once touched, and a freshly loaded 7 GB
-model can report 3 GB. MLX knows exactly what it allocated, so ask it — and ask
-the kernel separately for the machine-wide figure, which is the number that
-decides whether the next model will fit.
+RSS understates a model: MLX maps its weights, so pages only count against the
+process once touched. MLX knows what it allocated, so ask it, and ask the kernel
+separately for the machine-wide figure.
 """
 from __future__ import annotations
 
@@ -67,8 +65,7 @@ def _rss_of(pid: int) -> int:
 def _children_rss() -> int:
     """Resident size of everything this process spawned.
 
-    Image generation runs in a subprocess, so while it draws — the very moment
-    memory is worth watching — none of it showed up in our own figures.
+    Image generation runs in a subprocess, so its cost is not in our own RSS.
     """
     try:
         out = subprocess.check_output(
@@ -85,11 +82,10 @@ def _children_rss() -> int:
 
 
 def _child_cost(used_now: int) -> int:
-    """What the drawing subprocess is actually costing.
+    """What the drawing subprocess is costing.
 
-    Its RSS is a floor, not the answer: take the machine's own rise since it
-    started when that is larger, which is the number the user can see in
-    Activity Monitor and the one that decides whether anything else fits.
+    Its RSS is a floor. Take the machine's own rise since it started when that
+    is larger — the figure Activity Monitor shows.
     """
     rss = _children_rss()
     if _child_baseline is None:
@@ -98,18 +94,17 @@ def _child_cost(used_now: int) -> int:
 
 
 def _app_rss() -> int:
-    """The SwiftUI app, which is a separate process from this one.
+    """The SwiftUI app, a separate process, via FENNEL_PARENT_PID.
 
-    Its pid arrives as FENNEL_PARENT_PID (the same handle the watchdog uses).
-    Run from a terminal there is no app, and this is simply zero.
+    Zero when the backend is run from a terminal with no app attached.
     """
     parent = os.environ.get("FENNEL_PARENT_PID", "")
     return _rss_of(int(parent)) if parent.isdigit() else 0
 
 
 def _rss() -> int:
-    """This process's resident size. One fork per sample, so it is rate limited
-    by the caller rather than polled tightly."""
+    """This process's resident size. One fork per sample, so callers rate
+    limit it rather than polling tightly."""
     try:
         out = subprocess.check_output(
             ["ps", "-o", "rss=", "-p", str(os.getpid())], text=True).strip()
@@ -119,11 +114,10 @@ def _rss() -> int:
 
 
 def mlx_active() -> int:
-    """Live MLX tensors — the weights and caches actually in use.
+    """Live MLX tensors: the weights and caches in use.
 
-    Deliberately excludes MLX's reusable buffer pool: that is scratch space it
-    hands back on demand, so counting it makes a model look bigger than it is
-    and makes "available RAM" look worse than it is.
+    Excludes the reusable buffer pool, which is scratch space MLX hands back on
+    demand — counting it overstates both the model and the memory in use.
     """
     try:
         return mx.get_active_memory()
@@ -139,10 +133,8 @@ def mlx_bytes() -> int:
         return 0
 
 
-#: System memory in use when a subprocess was launched, so its true cost can be
-#: read from the machine rather than from its RSS — MLX allocates in unified
-#: memory that a process's resident size does not fully account for, which is
-#: why a job using five gigabytes reported two.
+#: System memory in use when a subprocess was launched, so its cost can be read
+#: from the machine rather than its RSS, which understates MLX allocations.
 _child_baseline: Optional[int] = None
 
 
@@ -157,13 +149,7 @@ def mark_child_end() -> None:
 
 
 def snapshot(min_interval: float = 1.5) -> dict:
-    """Current memory picture, cached briefly so a chatty caller cannot turn
-    this into a fork bomb.
-
-    `model` is what MLX holds: live tensors plus its reusable buffer pool. That
-    is the figure worth showing next to a model name, because it is the one that
-    changes when you switch.
-    """
+    """Current memory picture, cached briefly since each call forks `ps`."""
     global _last
     now = time.monotonic()
     if _last[1] and now - _last[0] < min_interval:

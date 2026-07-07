@@ -1,13 +1,12 @@
-"""First-run model download: ask first, then show what's happening.
+"""Model downloads: ask first, then show what's happening.
 
-Fennel's promise is that it runs on your machine, so the one moment it needs the
-network is the moment that most deserves a prompt. Nothing here touches the
-network until `download` is called, and `download` is only called after the app
-reports the user pressed the button — including the size estimate below, which
-is hardcoded rather than queried so that even the *estimate* costs no request.
+Nothing here touches the network until `download` is called, and that only
+happens once the app reports the user pressed the button. Even the size
+estimates are hardcoded rather than queried, so the consent screen itself makes
+no request.
 
-Progress is measured from the cache directory on disk, the only measure that
-survives huggingface_hub swapping download backends.
+Progress is measured from the cache directory, which survives huggingface_hub
+changing download backends.
 """
 from __future__ import annotations
 
@@ -15,17 +14,16 @@ import os
 import threading
 from typing import Callable, Optional
 
-#: A template that renders tools mentions the variable it is given them in.
-#: Checking for Fennel's own tool names instead was wrong — a template never
-#: contains those, it loops over whatever it is handed.
+#: A template that renders tools mentions the variable it is handed them in;
+#: it never contains Fennel's own tool names, since it loops over whatever it
+#: is given.
 _TOOL_MARKERS = ("tools", "tool_call")
 
 from huggingface_hub import scan_cache_dir, snapshot_download
 
 import config
 
-# Approximate download sizes, in bytes, for the consent screen. Rounded from the
-# real repos; being a little over is kinder than being under.
+# Approximate download sizes for the consent screen, rounded up from the repos.
 _SIZES = {
     "llm": 2_300_000_000,
     "stt": 500_000_000,
@@ -36,14 +34,12 @@ _SIZES = {
 Progress = Callable[[str, int, int], None]   # (what, done_bytes, total_bytes)
 
 
-#: What to fetch for the language model, and nothing else.
-#:
-#: Some repos ship every quantisation in one tree — 2-bit, 4-bit, 6-bit and
-#: 8-bit side by side — and an unrestricted snapshot_download takes all of them:
-#: 94.7 GB to use 16. fnmatch anchors at the start of the path, so
-#: "model*.safetensors" matches the weights at the root and not "8-bit/model…".
+#: What to fetch for the language model, and nothing else. Some repos ship
+#: every quantisation in one tree, and an unrestricted snapshot_download takes
+#: all of them. fnmatch anchors at the start of the path, so
+#: "model*.safetensors" matches the root weights but not "8-bit/model…".
 #: Only the language model is restricted; the other three are single-quant and
-#: keep their weights under names these patterns would miss.
+#: name their weights in ways these patterns would miss.
 _LLM_PATTERNS = ["*.json", "*.jinja", "*.txt", "*.py",
                  "model*.safetensors", "tokenizer.model"]
 
@@ -51,11 +47,7 @@ _LLM_PATTERNS = ["*.json", "*.jinja", "*.txt", "*.py",
 def _llm_bytes() -> int:
     """How big the chosen language model is, for the progress bar.
 
-    The registry first, then anything the user added by hand — the probe
-    measured that one — and only then the generic constant. A fixed 2.3 GB
-    scaled the bar to the wrong total for every model but one: it stalled short
-    of the end on a bigger model and sat at 100% through the rest of a smaller
-    one's download.
+    The registry first, then anything added by hand, then the generic constant.
     """
     known = config.model_info(config.LLM_MODEL).get("bytes")
     if known:
@@ -69,10 +61,8 @@ def _llm_bytes() -> int:
 def _repos() -> list[tuple[str, str, int, Optional[list]]]:
     """(key, repo_id, approx_bytes, allow_patterns) for everything Fennel needs."""
     return [
-        # The language model's size comes from the registry, not the constant:
-        # a fixed 2.3 GB meant the bar was scaled to the wrong total for every
-        # model but one — stalling short of the end on a bigger model and
-        # sitting at 100% for the rest of a smaller one's download.
+        # From the registry rather than the constant, so the bar is scaled to
+        # the model actually being fetched.
         ("llm", config.LLM_MODEL, _llm_bytes(), _LLM_PATTERNS),
         ("stt", config.STT_MODEL, _SIZES["stt"], None),
         ("tts", config.TTS_MODEL, _SIZES["tts"], None),
@@ -80,20 +70,15 @@ def _repos() -> list[tuple[str, str, int, Optional[list]]]:
     ]
 
 
-#: Not every model ships safetensors. Whisper's MLX build is a single
-#: weights.npz, and checking only for safetensors reported it as absent — which
-#: would have re-downloaded half a gigabyte on every launch.
+#: Not every model ships safetensors — Whisper's MLX build is a weights.npz.
 _WEIGHTS = (".safetensors", ".npz", ".bin", ".pth", ".gguf")
 
 
 def _weights_on_disk() -> dict[str, int]:
-    """repo_id -> bytes of weights actually present.
+    """repo_id -> bytes of weights present.
 
-    Presence in the cache index is not enough: fetching just a repo's config to
-    inspect its chat template registers the repo with no weights behind it, and
-    a picker built on that would offer to open a model it would then have to
-    download. So a repo counts as installed only once real .safetensors files
-    are there — and the size reported is what those files actually occupy.
+    Presence in the cache index is not enough: fetching a repo's config alone
+    registers it with no weights behind it.
     """
     out: dict[str, int] = {}
     try:
@@ -109,9 +94,8 @@ def _weights_on_disk() -> dict[str, int]:
     return out
 
 
-#: Models the user pasted in themselves, kept in the settings table so they
-#: survive a restart. Stored as the repo id plus whatever the probe learned, so
-#: the picker can describe a custom row without going back to the network.
+#: Models the user pasted in, kept in the settings table with whatever the
+#: probe learned, so the picker can describe one without going back online.
 _CUSTOM_KEY = "custom_models"
 
 
@@ -185,10 +169,8 @@ def probe(repo: str) -> dict:
     problems: list[str] = []
     warnings: list[str] = []
 
-    # Resolve the type the way mlx-lm does before deciding it is unsupported.
-    # Several families are served by another family's implementation — Mistral
-    # by llama.py, for one — so checking the filenames alone declared working
-    # models unsupported.
+    # Resolve the type the way mlx-lm does: several families are served by
+    # another family's implementation, Mistral by llama.py among them.
     from mlx_lm.utils import MODEL_REMAPPING
 
     supported = {p.stem for p in
@@ -258,22 +240,17 @@ def _repo_size(repo: str) -> tuple[int, list]:
     return total, sorted(subdirs)
 
 
-#: How much of a model's expected weight has to be present before it counts as
-#: downloaded. Not 100%: the patterns above skip files the published size
-#: includes, so a complete fetch lands a little short of the repo's own total.
-#: A finished download measures ~99% of the published total (Everyday: 2.26
-#: of 2.28 GB), so this is generous rather than tight.
+#: How much of the expected weight must be present to count as downloaded.
+#: Not 100%: the patterns above skip files the published size includes, so a
+#: finished download measures around 99% of the repo's own total.
 _COMPLETE_ENOUGH = 0.9
 
 
 def complete(repo: str, expected: int, on_disk: Optional[int] = None) -> bool:
     """Whether enough of `repo` is on disk to call it downloaded.
 
-    Presence of any weight file is not enough. An interrupted download leaves
-    real files behind, and treating those as a finished model meant the picker
-    skipped fetching the rest — so the first request for a picture paid for it
-    instead, mid-conversation, which is exactly what downloading at selection
-    was meant to prevent.
+    An interrupted download leaves real files behind, so the presence of any
+    weight file is not enough.
     """
     if on_disk is None:
         on_disk = _weights_on_disk().get(repo, 0)
@@ -300,8 +277,7 @@ def catalogue() -> list[dict]:
     have = _weights_on_disk()
     rows = [dict(m, installed=complete(m["id"], m.get("bytes", 0), have.get(m["id"], 0)),
                  on_disk=have.get(m["id"], 0), custom=False) for m in config.MODELS]
-    # Anything the user added by hand goes after the curated list, in the order
-    # they were added.
+    # Hand-added models follow the curated list, in the order they were added.
     rows += [dict(m, installed=complete(m["id"], m.get("bytes", 0), have.get(m["id"], 0)),
                   on_disk=have.get(m["id"], 0), custom=True) for m in custom_models()]
     return rows
