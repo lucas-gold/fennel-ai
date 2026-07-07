@@ -1,16 +1,15 @@
-"""Orchestrator: mic frames → endpoint → STT → LLM → clause splitter → TTS,
-with the epoch counter and barge-in (reference D3), plus the Stage 3 tool loop.
+"""Mic frames → endpoint → STT → LLM → clause splitter → TTS, with barge-in.
 
 Every stage captures the epoch it started under and checks `_live()` before any
-side effect, because MLX generation is a blocking generator that can't be
-cancelled cleanly mid-flight. Barge-in bumps the epoch (dropping all in-flight
-output within ~100 ms) and records only what was actually spoken, with a `—`
-marker, so the model's next turn is grounded in what the user really heard.
+side effect: MLX generation is a blocking generator that can't be cancelled
+cleanly mid-flight. Barge-in bumps the epoch, dropping in-flight output within
+about 100 ms, and records only what was actually spoken with a `—` marker, so
+the next turn is grounded in what the user heard.
 
-Tool calls (D-HOME) are split out of the stream before TTS ever sees them, fired
-the moment they complete so the home card appears while the model is still
-talking, and their results are appended as conversation messages — which keeps
-them last in the prompt, so the cached prefix survives (D4).
+Tool calls are split out of the stream before TTS sees them and fired as soon as
+they complete, so the card appears while the model is still talking. Their
+results are appended as conversation messages, which keeps them last in the
+prompt and leaves the cached prefix intact.
 """
 from __future__ import annotations
 
@@ -37,9 +36,9 @@ from voice.tools import ANSWERING_TOOLS, ToolStream, normalize, system_prompt
 from voice.tts import ClauseSplitter, KokoroTTS
 from voice.vad import Endpointer
 
-# Tools slow enough that silence reads as a hang. The backend says these, not
-# the model: instructing the model to speak before calling made it sometimes say
-# the line and never call at all.
+# Tools slow enough that silence reads as a hang. The backend says these,
+# not the model — told to speak before calling, it sometimes says the line
+# and never calls.
 LEAD_INS = {
     "search_wikipedia": "Let me look that up.",
     "search_web": "Let me search the web for that.",
@@ -47,38 +46,34 @@ LEAD_INS = {
     "agenda": "Let me check.",
 }
 
-# A request to write something the user will send or keep. Drafting is the one
-# task where conversational temperature measurably hurts: the padding a warm
-# sampler adds is exactly where the invented details live (D-DRAFT).
-# "Draw me a X" is unmistakable, and whether it becomes a picture should not
-# depend on a 4B choosing to call a tool this time. If the user plainly asked
-# and no image was raised, the request is honoured from their own words.
-#: One picture at a time. A second request while one is drawing waits rather
-#: than doubling the memory and halving the speed of both.
+# One picture at a time. A second request waits rather than doubling the memory
+# and halving the speed of both.
 _IMAGE_LOCK = asyncio.Lock()
 
+# A plain request for a picture. Whether one appears shouldn't depend on the
+# model choosing to call the tool this time, so if the user clearly asked and no
+# image was raised, the request is honoured from their own words. The nouns
+# cover a logo, an icon and a poster as well as "picture"; the bare imperative
+# needs an article after the verb, which is what separates "draw a red barn"
+# from "draw your own conclusions".
 _DRAWY = re.compile(
     r"\b(draw|sketch|paint|generate|create|make|render|show|design)\b[^.?!]{0,24}?"
-    # Not just "picture": a logo, an icon, a poster are all this feature, and
-    # asking for one used to fall through to an empty reply.
     r"\b(image|picture|photo|photograph|drawing|painting|artwork|illustration|"
     r"logo|icon|poster|wallpaper|portrait|banner|sketch|render|mockup|design)s?\b"
     r"|\bimagine\s+(a|an|the)\b"
-    # The bare imperative — "draw a red barn". Requires an article after the
-    # verb, which is what separates it from "draw your own conclusions".
     r"|^\s*(please\s+)?(draw|sketch|paint|render)\s+(me\s+)?(a|an|the)\b", re.I)
 
+# A request to write something the user will send or keep. Drafting runs colder:
+# the padding a warm sampler adds is where invented details live.
 _DRAFTY = re.compile(
     r"\b(write|draft|compose|reword|rewrite|edit|proofread)\b[^.?!]{0,40}?"
     r"\b(email|e-mail|message|note|letter|text|reply|response|memo|post|"
     r"caption|bio|invitation|invite|thank[- ]?you)\b", re.I)
 
-# A reply that announces an action instead of taking it: "let me look that up",
-# "one moment", "I'll check". Harmless when a tool call follows in the same
-# generation; a dead end when none does, and the user is left watching a promise.
-# It happens most with models whose template drops the tool schemas entirely, but
-# any model does it occasionally, so the recovery lives here rather than in the
-# prompt (a rule the model must not break belongs in code).
+# A reply that announces an action instead of taking it — "let me look that
+# up", "one moment". Harmless when a tool call follows in the same
+# generation, a dead end when none does. Recovery lives here rather than in
+# the prompt: a rule the model must not break belongs in code.
 _PROMISE = re.compile(
     r"\b(let me (just |quickly )?(search|look|check|find|see)"
     r"|i'?ll (search|look|check|find|see|get)"
@@ -90,9 +85,7 @@ _PROMISE = re.compile(
 _EMOJI = re.compile("[\U0001F300-\U0001FAFF\u2600-\u27BF\uFE0F\u200D]")
 
 
-# Led in from inside the search branch instead, once we know a request is
-# actually going out — announcing "let me search the web" and then admitting we
-# can't is worse than simply saying we can't.
+# Led in from the search branch, once a request is actually going out.
 _LEADS_ITSELF = {"search_web", "search_wikipedia"}
 
 
@@ -119,21 +112,21 @@ class Session:
         self._send_control = send_control
         self._send_audio = send_audio
 
-        # Heavy model weights are shared across connections; only the KV cache
-        # and VAD state are per-conversation.
+        # Model weights are shared across connections; the KV cache and VAD state
+        # are per-conversation.
         self._stt = stt
         self._llm = llm
         self._llm.reset()
-        # Set by the server: await it with True to have the language model
-        # unloaded, False to bring it back. Only image generation uses this.
+        # Set by the server: await with True to unload the language model, False to
+        # bring it back. Only image generation uses it.
         self._on_need_memory = None
         self._tts = tts
         self._endpointer = Endpointer()
         self._store = store
         self._memory = memory
 
-        # Must be the exact string the LLM was primed with, or the cached
-        # prefix misses and the first turn pays for the whole prefill again.
+        # Must be the exact string the LLM was primed with, or the cached prefix
+        # misses and the first turn pays the whole prefill again.
         self._system = system or system_prompt(config.LLM_SYSTEM)
         self._session_id: int = 0
         self._messages: list[dict] = [{"role": "system", "content": self._system}]
@@ -144,16 +137,13 @@ class Session:
         self._turn_task: Optional[asyncio.Task] = None
         self._stop = threading.Event()
         self._assistant_active = False
-        # Wall-clock instant the audio we've sent will finish playing. The app
-        # buffers whole clauses, so playback outlives generation by seconds —
-        # guarding only while `_assistant_active` left the tail unprotected.
+        # When the audio already sent will finish playing. The app buffers whole
+        # clauses, so playback outlives generation by seconds.
         self._audio_until = 0.0
         # What we recently said out loud, for the echo check below.
         self._spoken_log: deque = deque(maxlen=40)
-        # Emoji rationing. Asking the model for "occasionally" doesn't work: at
-        # "almost never" it used none at all, at "occasionally" it put one in
-        # every single reply. The middle the user actually wants is a rule, not
-        # an adverb — at most one per reply, and never twice running.
+        # Emoji rationing. Asking for "occasionally" gives none or one every time,
+        # so it is a rule instead: at most one per reply, never twice running.
         self._last_reply_had_emoji = False
         self._rx = 0  # mic frames received (debug)
 
@@ -183,16 +173,13 @@ class Session:
         await self._send_control(P.encode(
             "session_opened", id=self._session_id,
             messages=[{"role": r["role"], "text": r["content"]} for r in rows],
-            # Restored, not re-run: these are shown as they were left. Sending
-            # them as `tool` frames would have the app perform every side effect
-            # again — a reopened chat would re-create its own reminders.
+            # Restored, not re-run. Sending them as `tool` frames would have the app
+            # perform every side effect again.
             cards=self._store.cards(self._session_id)))
         await self.send_sessions()
 
-        # Resuming replays the verbatim window, and that is a real prefill —
-        # measured 3,370 tokens (~18 s here) landing on whatever the user says
-        # first, with the orb claiming to speak the whole time. Do it now, in the
-        # lull between the window appearing and them saying anything.
+        # Resuming replays the verbatim window, which is a real prefill of a few
+        # thousand tokens. Do it now, in the lull before the user says anything.
         if len(self._messages) > 1:
             self._warm_task = asyncio.create_task(
                 asyncio.to_thread(self._llm.warm, list(self._messages)))
@@ -274,7 +261,7 @@ class Session:
     # ── turn control ───────────────────────────────────────────────────────
 
     async def _barge_in(self) -> None:
-        self._epoch += 1        # invalidate every in-flight stage (D3)
+        self._epoch += 1        # invalidate every in-flight stage
         self._stop.set()        # unblock the LLM worker thread
         self._assistant_active = False
         self._audio_until = 0.0
@@ -301,8 +288,8 @@ class Session:
     async def _start_turn(self, audio: Optional[np.ndarray] = None,
                           text: Optional[str] = None, speak: bool = True,
                           echo_risk: bool = False) -> None:
-        # The user is back: drop any summary still waiting for a lull rather
-        # than letting it grab the LLM lock ahead of their turn.
+        # The user is back — drop any summary still waiting for a lull rather than
+        # letting it take the LLM lock ahead of their turn.
         if self._summary_task and not self._summary_task.done():
             self._summary_task.cancel()
         if self._warm_task and not self._warm_task.done():
@@ -392,16 +379,16 @@ class Session:
             except Exception as exc:
                 return {"name": name, "ok": False,
                         "error": f"couldn't build the shortcut: {exc}"}
-            # The app opens it; macOS shows an Add sheet listing every action, so
-            # nothing reaches their library without them approving it.
+            # The app opens it and macOS shows an Add sheet listing every action, so
+            # nothing reaches their library unapproved.
             card = {**card, "path": path}
             result = {"ok": True, "name": card["name"],
                       "note": "waiting for them to press Add"}
 
         if name in ("search_wikipedia", "search_web"):
-            # Its own setting, not the daily-updates one: a daily fetch of fixed
-            # feeds reveals nothing about the user, whereas this sends their
-            # actual question to a third party (D-BRIEFING).
+            # Its own setting, not the daily-updates one: a daily fetch of fixed feeds
+            # reveals nothing about the user, whereas this sends their actual question
+            # to a third party.
             if self._store.setting("lookups", "0") != "1":
                 return {"name": name, "ok": False,
                         "error": "looking things up is turned off in settings; "
@@ -409,10 +396,8 @@ class Session:
                                  "look it up"}
             if name == "search_web":
                 if blocked := self._quota_block():
-                    # Before any lead-in: promising "let me search the web" and
-                    # then admitting we can't is worse than simply saying so.
-                    # Short-circuit: no request is made at all, and the model is
-                    # told why so it can explain if the user pushes.
+                    # Before any lead-in, and without making the request. The model is told why
+                    # so it can explain if the user pushes.
                     return {"name": name, "ok": False, "error": blocked}
                 key = self._store.setting("web_key", "")
                 await _lead(say, name)
@@ -436,8 +421,8 @@ class Session:
                         "error": f"nothing useful came back from {source} for "
                                  f"{card['query']!r} — try once more with "
                                  f"different terms, or say you couldn't find it"}
-            # The card carries the extract, not just the title: a list of bare
-            # headings tells the user nothing about what was actually found.
+            # The card carries the extract, not just the title — a list of bare
+            # headings says nothing about what was found.
             card = {**card, "source": source, "results": [
                 {"title": h.title, "extract": h.summary[:320], "link": h.link}
                 for h in hits]}
@@ -455,17 +440,16 @@ class Session:
         self._remember_card(call_id, name, card)
 
         if name == "generate_image":
-            # The picture takes about a minute. The card is already on screen,
-            # so draw it in the background and let the turn finish talking —
-            # blocking here would leave the user watching a dead conversation.
+            # A picture takes about a minute. The card is already on screen, so draw in
+            # the background and let the turn finish talking.
             self._pending.pop(call_id, None)
             asyncio.create_task(self._draw_image(call_id, card))
             return {"name": name, "ok": True, "status": "started"}
         try:
             app = await asyncio.wait_for(fut, config.TOOL_APP_TIMEOUT_S)
         except asyncio.TimeoutError:
-            # The card is on screen either way; assume the write is in flight
-            # rather than making the model apologise for a slow app.
+            # The card is on screen either way, so assume the write is in flight rather
+            # than making the model apologise for a slow app.
             app = None
             print(f"[tool] {name}: app did not report back in time", flush=True)
         finally:
@@ -474,8 +458,8 @@ class Session:
         if app is not None and not app.get("ok", True):
             return {"name": name, "ok": False,
                     "error": app.get("error") or "the app could not complete it"}
-        # Read-style tools (agenda) answer from the app's side of the wire —
-        # its `data` is the actual result the model has to speak from.
+        # Read-style tools such as agenda answer from the app's side of the wire;
+        # its `data` is what the model speaks from.
         if app is not None and isinstance(app.get("data"), dict):
             result = {**result, **app["data"]}
         return {"name": name, **result}
@@ -487,15 +471,13 @@ class Session:
                         echo_risk: bool = False) -> None:
         from_voice = text is None
         do_speak = from_voice or speak       # voice turns always speak
-        # Typed turns need this too. It used to be inside `if from_voice`, so a
-        # typed message showed no thinking state and no typing indicator — the
-        # window just sat there looking stuck.
+        # Typed turns need this too, or the window sits there with no thinking
+        # state and no typing indicator.
         await self._send_control(P.encode("state", value="thinking"))
 
         # The language model may have stepped aside so a picture could be drawn
-        # (see _draw_image). Answer plainly instead of calling into an object
-        # whose weights have been freed — that used to leave the conversation
-        # dead until the image finished.
+        # (see _draw_image). Answer plainly rather than calling into an object
+        # whose weights have been freed.
         if self._llm is None or not self._llm.available:
             await self._hold_the_line(epoch, text, do_speak)
             return
@@ -514,9 +496,8 @@ class Session:
             return
         if from_voice:  # let the UI show what was heard
             await self._send_control(P.encode("stt", text=text))
-        # The store keeps what the user actually said; the prompt gets the
-        # volatile preamble (clock + recall) glued on front — last position in
-        # the prompt, so the cached prefix behind it survives (D4).
+        # The store keeps what the user said; the prompt gets the volatile preamble
+        # glued on front, last in the prompt so the cached prefix survives.
         prompt_user = self._memory.preamble(self._session_id, text) + text
         self._memory.remember(self._session_id, "user", text,
                               prompt_text=prompt_user)
@@ -551,8 +532,8 @@ class Session:
             cached prefix matches token-for-token), any tool calls, and the
             prose actually delivered — all streamed and spoken along the way."""
             nonlocal gap
-            # Fresh splitter per pass: a post-tool confirmation is the moment
-            # the user is waiting on, so it gets the aggressive first cut too.
+            # Fresh splitter per pass, so a post-tool confirmation gets the same
+            # aggressive first cut.
             splitter = ClauseSplitter()
             ts = ToolStream()
             calls: list[dict] = []
@@ -622,10 +603,8 @@ class Session:
             return ts.raw, calls, said
 
         self._assistant_active = do_speak
-        # "Speaking" is announced by speak_clause when the first audio actually
-        # goes out, not here. Announcing it up front meant the orb read
-        # "Speaking" through the whole prefill and generation — on a resumed
-        # session that is ~18 s of silence labelled as speech.
+        # "Speaking" is announced by speak_clause when the first audio goes out,
+        # not here — announcing it up front labels the whole prefill as speech.
         visible = ""
         announced_speaking = [False]   # list so the nested speak_clause can set it
         draft_temp = config.LLM_DRAFT_TEMP if _DRAFTY.search(text) else None
@@ -640,16 +619,13 @@ class Session:
                 fired = fired or bool(calls)
                 if not self._live(epoch):
                     break
-                # Store the generation verbatim: re-rendering structured
-                # tool_calls would re-tokenize differently and cost a re-prefill.
+                # Store the generation verbatim; re-rendering structured
+                # tool_calls would re-tokenize and cost a re-prefill.
                 self._messages.append({"role": "assistant", "content": raw})
                 if not calls or round_ == config.LLM_TOOL_ROUNDS:
                     break
-                # Close the bubble before the tool runs. What the model says
-                # on its way to a search ("let me look that up") and what it
-                # says afterwards are two different remarks, and running them
-                # together left the answer buried under its own preamble with
-                # no sign that anything had happened in between.
+                # Close the bubble before the tool runs. What the model says on its way
+                # to a search and what it says afterwards are two different remarks.
                 if said.strip():
                     await self._send_control(P.encode("split", turn=turn))
                 results = [c.get("result", {"name": c["name"], "ok": True}) for c in calls]
@@ -658,22 +634,21 @@ class Session:
                     "content": json.dumps(results[0] if len(results) == 1 else results),
                 })
                 gap = bool(said) and not said.endswith((" ", "\n"))
-                # Qwen puts its tool call last, so any prose in that pass was
-                # already a confirmation. Saying it again is the single most
-                # annoying failure mode in a voice UI — and skipping the extra
-                # round also removes a whole generation from the critical path.
-                # A failed tool still gets a round, so the model can own it.
-                # Never skip for a tool whose result IS the answer, or the user
-                # hears "let me look that up" and then nothing.
+                # The tool call comes last, so any prose in that pass was already a
+                # confirmation and repeating it is the worst failure mode in a voice UI.
+                # Skipping the round also takes a generation off the critical
+                # path.
+                # A failed tool still gets one so the model can own it, and a tool whose
+                # result is the answer always does, or the user hears "let me look that
+                # up" and then nothing.
                 answering = any(c["name"] in ANSWERING_TOOLS for c in calls)
                 if (not answering and len(said.strip()) >= 15
                         and all(r.get("ok") for r in results)):
                     break
 
-            # Promised but never acted. One rescue round, never a loop: tell it
-            # plainly that nothing was called and make it either call or answer.
-            # Without this the turn ends on "let me search for that" and simply
-            # stops, which reads as the app having hung.
+            # Promised but never acted. One rescue round, never a loop: tell it plainly
+            # that nothing was called and make it either call or answer. Without this
+            # the turn ends on "let me search for that" and stops.
             if self._live(epoch) and not fired and _PROMISE.search(visible):
                 print("[llm] promise with no tool call — forcing a follow-up",
                       flush=True)
@@ -688,32 +663,27 @@ class Session:
                 visible += said
                 if self._live(epoch):
                     self._messages.append({"role": "assistant", "content": raw})
-            # Smaller models answer "draw me X" by writing an
-            # <image_description> block instead of calling generate_image, and
-            # no amount of telling them otherwise fixes it. The block is a
-            # perfectly good prompt, so use it: the user asked for a picture and
-            # gets one, rather than an empty reply where the tag was stripped.
+            # Smaller models answer "draw me X" with an <image_description> block
+            # instead of calling generate_image, and telling them otherwise does not
+            # fix it. The block is a good prompt, so use it rather than stripping
+            # the tag and leaving an empty reply.
             drew = any(c["name"] == "generate_image" for c in calls)
             want_image = ((self._store.setting("images", "1") or "1") == "1"
                           and not drew and self._live(epoch)
                           and (self._image_desc or _DRAWY.search(text or "")))
             if want_image:
-                # Prefer the model's own description — it is a richer prompt
-                # than the bare request — but fall back to what the user said,
-                # so asking plainly always produces a picture.
+                # Prefer the model's own description, a richer prompt than the bare
+                # request, falling back to what the user said.
                 self._image_desc = self._image_desc or (text or "")
                 if not visible.strip():
-                    # The whole reply was the description, which is stripped —
-                    # so without this the user gets an empty bubble and a card
-                    # appearing out of nowhere.
+                    # The whole reply was the description, which is stripped — without
+                    # this the user gets an empty bubble and a card out of nowhere.
                     line = "Drawing that now — it takes about a minute."
                     visible += line
                     await self._send_control(
                         P.encode("token", turn=turn, text=line))
                 await self._draw_described(self._image_desc)
-            # Whatever happened above, an empty bubble is not an answer. This
-            # caught a request for a logo that produced only a stripped tag and
-            # no fallback: three dots, then nothing at all.
+            # An empty bubble is not an answer.
             if self._live(epoch) and not visible.strip() and not fired:
                 line = "Sorry — nothing came back that time. Try asking again?"
                 visible += line
@@ -723,13 +693,12 @@ class Session:
             if self._live(epoch):
                 self._commit(turn_start, visible.strip())
                 await self._send_control(P.encode("turn_end", turn=turn))
-                # Unconditional, to match the unconditional "thinking" above.
-                # Gated on do_speak, a typed turn with speech off never came out
-                # of thinking and the UI stayed stuck on it forever.
+                # Unconditional, to match the "thinking" above: gated on do_speak a
+                # typed turn with speech off never leaves the thinking state.
                 await self._send_control(P.encode("state", value="idle"))
                 await self._after_turn()
             else:
-                # barge-in: history records only what was actually spoken (D3)
+                # barge-in: history records only what was actually spoken
                 partial = (spoken.strip() + " —").strip()
                 self._messages.append({"role": "assistant", "content": partial})
                 self._commit(turn_start, partial)
@@ -742,9 +711,8 @@ class Session:
         chat that stops answering reads as broken. What they said is kept, so
         the model sees it once it is back.
         """
-        # A backstop only: the app disables the composer while `busy` is set,
-        # so this should never be reached. It exists because "should never" and
-        # "cannot" are different, and the alternative is a crash.
+        # A backstop: the app disables the composer while `busy` is set, so this
+        # should not be reachable.
         line = "One moment — I'm drawing that picture."
         self._turn_no += 1
         turn = self._turn_no
@@ -800,8 +768,8 @@ class Session:
 
         async def update(**fields) -> None:
             await self._send_control(P.encode("card_update", id=card_id, **fields))
-            # Persist only the settled states; progress lines are not worth
-            # writing to disk four times a picture.
+            # Persist settled states only; progress lines are not worth four writes
+            # a picture.
             if fields.get("status") in ("done", "failed"):
                 self._remember_card(card_id, "generate_image", card, **fields)
 
@@ -834,9 +802,8 @@ class Session:
         released = False
         try:
             if unload and self._on_need_memory is not None:
-                # Not enough room beside the language model. Give it back for
-                # the duration rather than letting the machine swap, which would
-                # cost far more than the reload does.
+                # Not enough room beside the language model. Give it back for the
+                # duration rather than letting the machine swap.
                 await update(status="working", detail="Freeing memory…")
                 await self._on_need_memory(True)
                 released = True
@@ -889,9 +856,8 @@ class Session:
 
     async def _after_turn(self) -> None:
         """Housekeeping the user must never wait for."""
-        # Safety valve: in a conversation with no pauses, `_start_turn` cancels
-        # maintenance every turn and the window would grow without limit. Well
-        # past budget we take the spike rather than let context run away.
+        # Safety valve: with no pauses at all, `_start_turn` cancels maintenance
+        # every turn and the window would grow without limit.
         if len(self._messages) > config.VERBATIM_TURNS * 8:
             print("[session] window far over budget; trimming inline", flush=True)
             self._rebuild()
