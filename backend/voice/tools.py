@@ -1,15 +1,14 @@
-"""Tool-calling layer (Stage 3 / D-HOME).
+"""Tool calling.
 
 Three pieces:
 
-  1. `TOOLS` — JSON-Schema function signatures handed to the tokenizer's chat
-     template. Qwen renders them into the system block, so they sit in the
-     STABLE prefix and cost one prefill per session, never per turn (D4).
-  2. `ToolStream` — splits the streamed reply into speakable prose and
-     `<tool_call>` blocks, so tool syntax is never spoken or shown.
-  3. `normalize` — validates/normalizes arguments into a card payload the app
-     can render and act on. The actual side effect (EventKit) happens in Swift;
-     the backend only ever normalizes and describes.
+  TOOLS       JSON-Schema signatures handed to the chat template, which renders
+              them into the system block — part of the stable prefix, so they
+              cost one prefill per session rather than one per turn.
+  ToolStream  splits the streamed reply into speakable prose and tool calls, so
+              tool syntax is never shown or spoken.
+  normalize   turns arguments into a card payload the app can render and act
+              on. The side effects themselves happen in Swift.
 """
 from __future__ import annotations
 
@@ -22,21 +21,19 @@ from typing import Any, Optional
 _OPEN, _CLOSE = "<tool_call>", "</tool_call>"
 
 # Every user turn is prefixed with a <context> block (clock, recall, news —
-# see memory.preamble). Smaller models imitate it: they echo the block back,
-# or open one and narrate a whole invented turn. It is scaffolding, never
-# something to show or read aloud, so it is swallowed exactly like a tool
-# call — in the stream, so a block split across chunks is never spoken one
-# character at a time.
+# see memory.preamble). Smaller models imitate it, echoing the block back or
+# narrating a whole invented turn. It is scaffolding, so it is swallowed in
+# the stream like a tool call, and never shown or spoken.
 _CTX_OPEN, _CTX_CLOSE = "<context>", "</context>"
 
-# Qwen3-4B answers "draw me X" by writing an <image_description> block rather
-# than calling generate_image. The persona tells it not to; this makes sure the
-# tag never reaches the screen or the speaker when it does it anyway.
+# Small models answer "draw me X" by writing an <image_description> block
+# instead of calling generate_image. The persona says not to; this keeps the
+# tag off the screen and out of the speaker when it happens anyway.
 _DESC_OPEN, _DESC_CLOSE = "<image_description>", "</image_description>"
 
-#: Words a title must not end on. Prepositions and articles because they leave
-#: it hanging; the participles and adjectives because a six-word cut through a
-#: longer description lands on them and reads as truncation rather than a name.
+#: Words a title must not end on. Prepositions and articles leave it
+#: hanging; the participles and adjectives are where a six-word cut through
+#: a longer description lands, and reading as truncation is worse.
 _TRAILING = {"a", "an", "the", "with", "of", "in", "on", "at", "and", "for",
              "to", "its", "his", "her", "their", "that", "which", "is", "are",
              "called", "named", "featuring", "showing", "wearing", "holding",
@@ -44,11 +41,11 @@ _TRAILING = {"a", "an", "the", "with", "of", "in", "on", "at", "and", "for",
 
 
 def _short_title(prompt: str) -> str:
-    """A name for the card: "cat sleeping on a bed", not the first six words of
-    a paragraph stopping mid-phrase.
+    """A name for the card: "cat sleeping on a bed", not six words stopping
+    mid-phrase.
 
-    Prefers the first clause — descriptions are comma-separated lists, and the
-    part before the first comma is almost always the subject.
+    Prefers the first clause; descriptions are comma-separated lists and the
+    part before the first comma is usually the subject.
     """
     first = re.split(r"[,;.]", prompt, maxsplit=1)[0]
     words = first.split()
@@ -64,9 +61,9 @@ _LEAD_IN = re.compile(
     r"^(picture (this|a|an)|imagine( this)?|here('?s| is) (a|an|the)|"
     r"visualise|visualize|envision)\b[:,]?\s*", re.I)
 
-#: The user's own request, when the model produced nothing usable, arrives as
-#: "generate a logo for an AI company". The ask is not part of the picture, and
-#: leaving it in gave cards titled "generate a logo for an AI".
+#: When the model produces nothing usable the user's own request is used
+#: instead, and the asking is not part of the picture — without this a card
+#: ends up titled "generate a logo for an AI".
 _REQUEST = re.compile(
     r"^\s*(please\s+)?(can you\s+|could you\s+|i('| a)?m looking for\s+)?"
     r"(draw|sketch|paint|render|generate|create|make|design|show)\s+"
@@ -414,11 +411,9 @@ TOOLS: list[dict] = [
 
 TOOL_NAMES = {t["function"]["name"] for t in TOOLS}
 
-# Tools gated behind a setting. A disabled tool is REMOVED from the list rather
-# than left in to refuse: a refusal ("I can't access Wikipedia directly") gets
-# stored like any other reply, and then teaches refusal even after the user
-# enables it — which is exactly what happened. If it isn't offered, it can't be
-# tried, so nothing teachable is recorded.
+# Tools gated behind a setting. A disabled tool is removed from the list
+# rather than left in to refuse: a refusal gets stored like any other reply
+# and teaches refusal even after the feature is switched on.
 TOOLS.append({
     "type": "function",
     "function": {
@@ -466,10 +461,9 @@ def tool_list(settings: dict[str, bool]) -> list[dict]:
     return [t for t in TOOLS
             if settings.get(OPTIONAL_TOOLS.get(t["function"]["name"], ""), True)]
 
-# Tools whose *result* is the answer, not a confirmation. The turn must always
-# run another LLM round after these, even if the model already said something —
-# skipping it (which is right for side-effecting tools) leaves the user with
-# "let me look that up" and then silence.
+# Tools whose result is the answer rather than a confirmation. The turn must
+# run another LLM round after these even if the model already spoke, or the
+# user gets "let me look that up" and then silence.
 ANSWERING_TOOLS = {"search_web", "search_wikipedia", "agenda",
                    "run_shortcut", "create_shortcut"}
 
@@ -485,19 +479,18 @@ def _held(buf: str, tag: str) -> int:
     return 0
 
 
-# A bare JSON object in prose that is really a tool call or a shortcut step —
-# `{ "type": "set_brightness", "value": "0.3" }` reached a user's chat and would
-# have been read aloud. Matched on the keys we actually emit, so ordinary prose
-# containing braces is left alone.
+# A bare JSON object written as prose instead of called — this reached a
+# user's chat and was read aloud. Matched on the keys we actually emit, so
+# ordinary prose containing braces is left alone.
 _STRAY_JSON = re.compile(
     r'\{\s*"(?:type|name)"\s*:\s*"[a-z_]+"[^{}]*\}', re.S)
 
 
-# Stage directions. RP-tuned models narrate in pseudo-tags — <sarcasm>, <laughs>,
-# <whisper> — which are silent nonsense on screen and read aloud verbatim by TTS.
-# They cannot be blanket-stripped: the coding model legitimately writes <div>, and
-# someone may ask what <script> does. So real HTML names are spared, and anything
-# inside a code fence or backticks is never touched at all.
+# Stage directions. Roleplay-tuned models narrate in pseudo-tags —
+# <sarcasm>, <laughs>, <whisper> — which are nonsense on screen and read
+# aloud verbatim. They can't be stripped blanket-fashion: the coding model
+# writes <div>, and someone may ask what <script> does. Real HTML names are
+# spared, and anything in a code fence or backticks is untouched.
 _HTML_OK = {
     "a", "abbr", "b", "body", "br", "button", "canvas", "code", "col", "div",
     "em", "footer", "form", "h1", "h2", "h3", "h4", "h5", "h6", "head", "header",
@@ -545,14 +538,12 @@ class ToolStream:
         self._in_call = False
         self._in_ctx = False
         self._ctx_close = _CTX_CLOSE
-        #: Text from an <image_description> block, if the model wrote one
-        #: instead of calling generate_image. Kept rather than dropped: it is a
-        #: perfectly good prompt, and using it is more reliable than persuading
-        #: a 4B to call the tool.
+        #: Text from an <image_description> block, when the model wrote one
+        #: instead of calling generate_image. Kept because it is a perfectly
+        #: good prompt, and more reliable than getting a small model to call.
         self.image_description = ""
-        # A swallowed block leaves the newline that followed it, which renders
-        # as a blank first line in the bubble — it reads as stray padding above
-        # the reply. Trim once, on the next prose to actually arrive.
+        # A swallowed block leaves the newline after it, which renders as a blank
+        # first line in the bubble. Trim once, on the next prose to arrive.
         self._trim_next = False
         self.raw = ""       # everything the model produced, verbatim
 
@@ -573,14 +564,12 @@ class ToolStream:
             elif self._in_ctx:
                 i = self._buf.find(self._ctx_close)
                 if i == -1:
-                    # Keep only what could still complete the closing tag, so an
-                    # echoed block of any length costs no memory and speaks none
-                    # of itself.
+                    # Keep only what could still complete the closing tag, so an echoed
+                    # block costs no memory and speaks none of itself.
                     keep = _held(self._buf, self._ctx_close)
                     if getattr(self, "_grabbing_desc", False):
-                        # Everything except the held tail: that tail may yet turn
-                        # out to be the closing tag, and capturing it would put
-                        # "</im" into the image prompt.
+                        # Everything except the held tail, which may yet turn out to be the
+                        # closing tag — capturing it would put "</im" in the prompt.
                         self.image_description += (
                             self._buf[:len(self._buf) - keep] if keep else self._buf)
                     self._buf = self._buf[len(self._buf) - keep:] if keep else ""
@@ -609,19 +598,17 @@ class ToolStream:
                     print(f"[tools] swallowed an echoed {tag} block", flush=True)
                     continue
                 if i == -1:
-                    # Hold back a partial "<tool_ca…" / "<contex…" so it is
-                    # never spoken — and a partial "</contex…" too, since an
-                    # orphan closing tag is only strippable once it is whole.
+                    # Hold back a partial "<tool_ca…", "<contex…" or "</contex…" so it is
+                    # never spoken; an orphan closing tag is only strippable once whole.
                     keep = max(_held(self._buf, _OPEN), _held(self._buf, _CTX_OPEN),
                                _held(self._buf, _CTX_CLOSE),
                                _held(self._buf, _DESC_OPEN))
                     out = self._buf[:len(self._buf) - keep] if keep else self._buf
                     self._buf = self._buf[len(self._buf) - keep:] if keep else ""
-                    # Also hold an unterminated "{…" — a stray JSON object can
-                    # only be recognised once its closing brace arrives, and
-                    # emitting the opening half would speak it a character at a
-                    # time. Give up past a sane length so real prose containing
-                    # a brace is never swallowed.
+                    # Also hold an unterminated "{…": a stray JSON object is only
+                    # recognisable once its closing brace arrives, and emitting the
+                    # opening half would speak it a character at a time. Give up past a
+                    # sane length so prose containing a brace is never swallowed.
                     brace = out.rfind("{")
                     if brace != -1 and "}" not in out[brace:] and len(out) - brace < 200:
                         self._buf = out[brace:] + self._buf
@@ -638,8 +625,7 @@ class ToolStream:
         if self._trim_next:
             stripped = out.lstrip()
             # Stay armed through empty emissions: at one character per chunk the
-            # closing tag lands with nothing after it, and disarming there would
-            # let the newline through on the following chunk.
+            # closing tag lands with nothing after it.
             if stripped:
                 self._trim_next = False
             out = stripped
@@ -655,20 +641,18 @@ class ToolStream:
             if getattr(self, "_grabbing_desc", False):
                 self.image_description += self._buf
                 self._grabbing_desc = False
-            # An unterminated echo: the model opened a block and ran out. There
-            # is nothing in it worth saying, so it goes rather than leaking out.
+            # An unterminated echo — nothing in it is worth saying.
             self._buf, self._in_ctx = "", False
             return "", []
         out, self._buf = self._buf, ""
         return self._emit(out), []
 
 
-# Some fine-tunes emit an XML-ish call instead of Hermes JSON, whatever their
-# chat template advertises:
+# Some fine-tunes emit an XML-ish call whatever their chat template
+# advertises:
 #     <function=set_reminder><parameter=title>Call the dentist</parameter></function>
-# Qwen3.5-9B-Defiant does this on every call. Recognising it is additive — the
-# JSON path is tried first and is unchanged — so a model that emits proper
-# Hermes never reaches here.
+# Additive: the JSON path is tried first, so a model emitting proper Hermes
+# never reaches here.
 _FN_NAME = re.compile(r"<function\s*=\s*([A-Za-z_]\w*)\s*>")
 _FN_ARG = re.compile(r"<parameter\s*=\s*([A-Za-z_]\w*)\s*>(.*?)</parameter\s*>",
                      re.DOTALL)
@@ -676,8 +660,7 @@ _FN_ARG = re.compile(r"<parameter\s*=\s*([A-Za-z_]\w*)\s*>(.*?)</parameter\s*>",
 
 def _coerce(raw: str):
     """A parameter block carries no type. Read it as JSON when it plainly is
-    one — `5`, `true`, a list — and otherwise leave it as the string it looks
-    like, so a title of "5" does not silently become a number."""
+    one, and otherwise leave it a string, so a title of "5" stays a title."""
     text = raw.strip()
     if text[:1] in "[{" or text in {"true", "false", "null"} or (
             text.replace(".", "", 1).lstrip("-").isdigit()):
@@ -742,9 +725,12 @@ def human_time(dt: datetime, now: Optional[datetime] = None) -> str:
 
 
 def normalize(name: str, args: dict) -> tuple[dict, dict]:
-    """→ (card_args, tool_result). `card_args` is what the app renders and acts
-    on; `tool_result` is what the model reads before it speaks, so it must
-    describe what will *actually* happen, not what was asked for."""
+    """→ (card_args, tool_result).
+
+    `card_args` is what the app renders and acts on. `tool_result` is what the
+    model reads before it speaks, so it describes what will actually happen
+    rather than what was asked for.
+    """
     now = datetime.now()
 
     if name == "set_reminder":
@@ -772,21 +758,20 @@ def normalize(name: str, args: dict) -> tuple[dict, dict]:
 
     if name == "generate_image":
         prompt = " ".join(str(args.get("prompt", "")).split())
-        # Models that describe rather than call open with a stage direction.
-        # It belongs in neither the title nor the prompt.
+        # Models that describe rather than call open with a stage direction, which
+        # belongs in neither the title nor the prompt.
         prompt = _LEAD_IN.sub("", prompt).strip()
         # Title from what the picture *is*, not from how it was asked for.
         subject = _REQUEST.sub("", prompt).strip() or prompt
         if not prompt:
             return {}, {"ok": False, "error": "no description given; ask what to draw"}
-        # No title. A generated picture is its description — a five-word name
-        # above the same words in full was one line of nothing.
+        # No title: a generated picture is its description, and a five-word name
+        # above the same words in full says nothing twice.
         card = {"title": "", "prompt": prompt[:600],
                 "subject": (str(args.get("subject", "")).strip()
                             or _short_title(subject))[:80]}
-        # The result the model sees is deliberately not "done": the picture is
-        # still a minute away, and a model told the tool succeeded will happily
-        # announce a picture nobody can see yet.
+        # Not "done": the picture is still a minute away, and a model told the tool
+        # succeeded will announce a picture nobody can see yet.
         result = {"ok": True, "status": "started",
                   "note": "the picture is being drawn and will appear on its own"}
         return card, result
@@ -876,18 +861,16 @@ def normalize(name: str, args: dict) -> tuple[dict, dict]:
 
 
 def system_prompt(base: str, now: Optional[datetime] = None) -> str:
-    """Base persona + dates + tool etiquette. Deliberately free of the clock so
-    it is byte-identical all day: the server prefills it once at startup and
-    every session reuses it (see LLM.prime), instead of paying ~4.7 s each.
+    """Persona, dates and tool etiquette.
 
-    The explicit day table is not padding: a 4-bit 4B model reliably gets clock
-    arithmetic right but miscounts weekdays ("next Wednesday" landed five days
-    late), and looking the date up beats computing it."""
+    No clock, so it stays byte-identical all day and can be primed once at
+    startup and reused by every session. The day table is spelled out because
+    small models do clock arithmetic well and weekday arithmetic badly.
+    """
     now = now or datetime.now()
-    # Backwards as well as forwards. The table began at today, so "yesterday"
-    # could not be resolved from it at all — and the model passed the word
-    # itself into a web search, where the engine resolved it against its own
-    # index and returned a result from the previous year.
+    # Backwards as well as forwards, or "yesterday" can't be resolved at all —
+    # and the word ends up in a web search, where the engine resolves it
+    # against its own index rather than against now.
     def _label(i: int) -> str:
         return {0: "  (today)", 1: "  (tomorrow)", -1: "  (yesterday)"}.get(i, "")
 
