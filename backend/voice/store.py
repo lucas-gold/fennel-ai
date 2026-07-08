@@ -1,4 +1,4 @@
-"""Durable state: chat sessions, messages, facts, rolling summaries (D8).
+"""Durable state: chat sessions, messages, facts, rolling summaries.
 
 SQLite lives in the backend, not the app, for one reason: the LLM is the main
 consumer. Recall, the summary and the verbatim window are all prompt inputs, so
@@ -103,7 +103,7 @@ CREATE TABLE IF NOT EXISTS settings (
 );
 
 -- Daily briefing: one row per day, held verbatim because it is prefilled into
--- the prompt prefix and must be byte-identical all day (D-PREFIX).
+-- the prompt prefix and must be byte-identical all day.
 CREATE TABLE IF NOT EXISTS briefings (
     day     TEXT PRIMARY KEY,
     text    TEXT NOT NULL,

@@ -1,8 +1,9 @@
-"""VAD stage: Silero v5 on onnxruntime directly (D10 — never the silero-vad pip
-package, which drags in ~2.5 GB of torch to run a 2 MB model).
+"""Silero v5 on onnxruntime directly, rather than the silero-vad pip package,
+which pulls in ~2.5 GB of torch to run a 2 MB model.
 
-The model is stateful (LSTM state across frames), which is why it beats an
-energy gate on breathy speech and background noise. Reset between utterances.
+The model is stateful, carrying LSTM state across frames, which is why it beats
+an energy gate on breathy speech and background noise. Reset between
+utterances.
 Verified I/O: input[batch, samples], state[2, 1, 128], sr scalar int64;
 outputs prob[batch, 1] and the next state.
 """

@@ -129,10 +129,9 @@ def forget_custom(repo: str) -> None:
 def probe(repo: str) -> dict:
     """Look a repo over before committing to it.
 
-    Everything that goes wrong with an unfamiliar model is visible in its
-    config and its chat template — a few kilobytes — so it is worth reading
-    them before a five-gigabyte download rather than after. Reports findings
-    rather than refusing: the user can proceed knowing what is wrong.
+    What goes wrong with an unfamiliar model is visible in its config and chat
+    template, a few kilobytes, so read those before downloading gigabytes.
+    Reports findings rather than refusing; the caller decides.
     """
     import json as _json
     import pathlib
@@ -286,10 +285,8 @@ def catalogue() -> list[dict]:
 def delete(repo: str, in_use: Optional[str] = None) -> int:
     """Remove a downloaded model from the hub cache. Returns bytes freed.
 
-    Refuses to touch anything outside the model registry, and refuses to delete
-    `in_use` — a picker that can delete the model it is about to load is one
-    that can brick the next launch. Before anything is loaded there is no such
-    model, so during the startup picker every row is fair game.
+    Refuses anything outside the model registry, and refuses `in_use`. Nothing
+    is loaded while the startup picker is up, so every row is fair game there.
     """
     known = {m["id"] for m in config.MODELS} | {m["id"] for m in custom_models()}
     if repo not in known:
@@ -320,10 +317,9 @@ def _cached_repo_ids() -> set[str]:
 def missing() -> list[tuple[str, str, int]]:
     """Which models still need downloading. Empty means we can start offline.
 
-    Weights, not the cache index. A repo whose blobs have been deleted — or one
-    only ever fetched for its config — is still listed in the index, and taking
-    that as proof of presence meant the download step was skipped and the model
-    fetched later, at load time, without ever passing the consent screen.
+    Weights, not the cache index: a repo whose blobs have been deleted, or one
+    fetched only for its config, is still listed there. Trusting the index
+    skips the download and fetches at load time, past the consent screen.
     """
     have = _weights_on_disk()
     return [(k, r, n, pat) for k, r, n, pat in _repos()
@@ -341,9 +337,9 @@ def human(n: int) -> str:
 def _cache_bytes() -> int:
     """Bytes of actual model data on disk.
 
-    Only the `hub` subtree: huggingface_hub also keeps a transient xet chunk
-    cache alongside it, and counting that reported 206 MB of progress for a
-    133 MB model. Walking the tree is cheap next to a multi-gigabyte download.
+    Only the `hub` subtree; huggingface_hub keeps a transient chunk cache
+    alongside it that would be counted twice. Walking the tree is cheap next
+    to a multi-gigabyte download.
     """
     root = os.environ.get("HF_HOME") or os.path.expanduser("~/.cache/huggingface")
     root = os.path.join(root, "hub")
@@ -379,14 +375,11 @@ def _clear_repo(repo: str) -> None:
 def download(progress: Progress) -> None:
     """Fetch every missing model, reporting bytes as they land.
 
-    Progress is measured from the cache directory rather than huggingface_hub's
-    tqdm hooks: its xet backend runs several bars at once ("Downloading bytes",
-    "Reconstructing"), so summing their deltas reported 267 MB of progress for a
-    133 MB model and pinned the bar at 100%.
+    Progress comes from the cache directory rather than huggingface_hub's tqdm
+    hooks, which run several bars at once and can't simply be summed.
 
-    Raises on failure so the caller can surface it — a half-downloaded model
-    that fails later at load time is a much worse experience than a clear
-    "couldn't download" while the user is still watching the progress bar.
+    Raises on failure so the caller can surface it while the user is still
+    watching the progress bar.
     """
     items = missing()
     grand = total_bytes(items)

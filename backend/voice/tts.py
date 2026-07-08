@@ -1,4 +1,4 @@
-"""TTS stage: Kokoro via mlx-audio, plus the greedy clause splitter (D5).
+"""Kokoro speech synthesis via mlx-audio, plus the clause splitter.
 
 The mlx-audio call is isolated in `_synth` on purpose: its API moves between
 releases, so if Kokoro breaks on load or synthesis that is the ONLY function to
@@ -51,14 +51,12 @@ def speakable(text: str) -> str:
 
 
 class ClauseSplitter:
-    """Cut the first speakable fragment aggressively (~18 chars) to minimise
-    time-to-first-audio, then ramp to longer spans (~45, then ~90) for better
-    prosody once audio is already playing. A hard sentence end always cuts
-    regardless of length, so "Sure." goes out immediately (D5).
+    """Cut the first fragment short (~18 chars) so audio starts sooner, then
+    ramp to ~45 and ~90 for better prosody once it is playing. A hard sentence
+    end always cuts, so "Sure." goes out immediately.
 
-    The ramp is what keeps playback continuous: each clause has to be long
-    enough to cover synthesising the next one, and jumping straight from 18 to
-    90 chars left an audible gap about a second into every reply."""
+    The ramp keeps playback continuous: each clause has to be long enough to
+    cover synthesising the next, so widening the steps opens an audible gap."""
 
     def __init__(self, first: int = config.CLAUSE_FIRST_CHARS,
                  second: int = config.CLAUSE_SECOND_CHARS,
