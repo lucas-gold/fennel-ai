@@ -37,30 +37,29 @@ final class ChatModel: ObservableObject {
     @Published var cards: [HomeCard] = []    // tool results, placed in the transcript
 
     /// A running timer stays pinned beside the orb rather than scrolling away
-    /// with the conversation — a countdown you cannot see is not a countdown.
+    /// with the conversation.
     var pinnedCards: [HomeCard] { cards.filter { $0.kind == .timer } }
     /// Everything else belongs in the timeline, at the point it happened.
     var inlineCards: [HomeCard] { cards.filter { $0.kind != .timer } }
     @Published var sessions: [ChatSession] = []
     @Published var currentSessionID = 0
-    /// Chats showing in the tab strip. One is the norm — the strip only appears
-    /// once a second is opened, so the default shape stays "one ongoing chat".
+    /// Chats showing in the tab strip. It only appears once a second chat is
+    /// open, so the default shape stays one ongoing conversation.
     @Published var openTabs: [Int] = []
     /// Opt-in networking. Off by default: the app is offline unless asked.
     @Published var dailyUpdates = false
     @Published var location = ""
-    /// "Look things up" — Wikipedia, always free. The web tool additionally
-    /// needs a key, which lives in the Keychain and never in the backend's DB.
+    /// "Look things up" — Wikipedia, always free. Web search additionally needs
+    /// a key, which lives in the Keychain rather than the backend's database.
     @Published var lookups = false
-    /// The image model, as shown on its own row at the top of the picker.
-    /// Not in the network panel: it is a model, and it belongs with the models.
+    /// The image model, shown on its own row at the top of the picker.
     @Published var imageModel: ModelOption?
     @Published var imagesEnabled = false
     @Published var webKey = ""
     @Published var hasWebKey = false
     @Published var webPaused = false
-    /// What's running locally, reported by the backend so the claim in Settings
-    /// always matches the models actually loaded.
+    /// What's running locally, reported by the backend so Settings can't drift
+    /// from the models actually loaded.
     @Published var localModels = ""
     /// First-run setup, driven by the backend's `setup` frames.
     @Published var setupPhase = "checking"
@@ -70,51 +69,48 @@ final class ChatModel: ObservableObject {
     @Published var setupEta = 0.0
     @Published var setupDownloading = false
     @Published var setupLoaded = ""       // "1.2 GB of 3.5 GB in memory"
-    /// The startup model picker, sent by the backend so the app holds no model
-    /// knowledge of its own — add a model to config.MODELS and it appears here.
+    /// The picker's rows, sent by the backend — the app holds no model
+    /// knowledge of its own.
     @Published var setupModels: [ModelOption] = []
     @Published var setupCurrent = ""      // which one is preselected
     @Published var setupNote = ""         // e.g. why a delete was refused
     /// Which model is actually resident, as opposed to merely last chosen.
     @Published var loadedModelID = ""
-    /// What Fennel holds besides the model — Whisper, Kokoro, the embedder and
+    /// What Fennel holds besides the model: Whisper, Kokoro, the embedder and
     /// the Python runtime.
     @Published var overheadBytes = 0
     /// The last answer from checking a pasted model path.
     @Published var probe: [String: Any] = [:]
     @Published var probing = false
-    /// The SwiftUI app's own resident size. A separate process from the
-    /// backend, so it has to be added in rather than assumed included.
+    /// The app's own resident size. A separate process from the backend, so it
+    /// has to be added in rather than assumed included.
     @Published var appBytes = 0
-    /// Subprocesses the backend spawned — image generation, which is where
-    /// most of the memory goes while it runs.
+    /// Subprocesses the backend spawned — image generation, which is where the
+    /// memory goes while it runs.
     @Published var childBytes = 0
-    /// Set while the language model is unloaded so something heavier can run.
-    /// The composer and the mic are disabled for the duration — there is
-    /// nothing to answer with, and a message typed into the void is worse than
-    /// a disabled box that says why.
+    /// Set while the language model is unloaded for something heavier. The
+    /// composer and mic are disabled for the duration: there is nothing to
+    /// answer with.
     @Published var busy = false
     @Published var busyDetail = ""
     /// The model in use, for the chip beside the composer.
     @Published var modelName = ""
     @Published var modelID = ""
-    /// Live memory, pushed by the backend every couple of seconds. `modelBytes`
-    /// is what MLX actually holds — RSS understates it, because weights are
-    /// mapped and only count once touched.
-    /// The language model's own share of MLX, not all of MLX. The two are far
-    /// apart: Kokoro, Whisper and the embedder live there too, as does MLX's
-    /// reusable buffer pool.
+    /// Live memory, pushed by the backend every couple of seconds.
+    ///
+    /// `modelBytes` is the language model's share of MLX, not all of it —
+    /// Kokoro, Whisper, the embedder and the buffer pool live there too. RSS
+    /// would understate it, since mapped weights only count once touched.
     @Published var modelBytes = 0
     @Published var systemUsedBytes = 0
     @Published var systemTotalBytes = 0
     /// Set once the backend has sent this session's history, so the window is
     /// never revealed as an empty chat that fills in a moment later.
     @Published var sessionLoaded = false
-    /// Shown as a three-dot bubble, but only once a reply is genuinely slow —
-    /// flashing it on every fast turn is worse than not having it.
+    /// Shown as a three-dot bubble, and only once a reply is genuinely slow.
     @Published var showTyping = false
-    /// Hardware echo cancellation. Costs a little of your other audio's volume
-    /// while the mic is open, which is why it is a choice rather than a given.
+    /// Hardware echo cancellation. It quiets your other audio while the mic is
+    /// open, which is why it is a choice rather than a given.
     @Published var echoCancellation = UserDefaults.standard.bool(forKey: "echoCancellation")
 
     private let client = WebSocketClient()
@@ -127,8 +123,8 @@ final class ChatModel: ObservableObject {
     private var awaitToken = 0                // invalidates a pending typing timer
 
     /// Start the one-second fuse for the typing indicator. Anything that ends
-    /// the wait — a token, turn_end, a cancel — bumps `awaitToken` so a stale
-    /// timer can't light the dots after the reply already arrived.
+    /// the wait bumps `awaitToken`, so a stale timer can't light the dots
+    /// after the reply has arrived.
     private func beginAwaitingReply() {
         awaitToken += 1
         let mine = awaitToken
@@ -163,8 +159,8 @@ final class ChatModel: ObservableObject {
         echoCancellation = on
         UserDefaults.standard.set(on, forKey: "echoCancellation")
         audio.echoCancellation = on
-        // Takes effect on the next listen: the engine is rebuilt each time the
-        // mic opens, and switching mid-capture would drop the current utterance.
+        // Takes effect on the next listen; the engine is rebuilt each time the mic
+        // opens, and switching mid-capture would drop the current utterance.
     }
 
     func toggleListening() {
@@ -209,8 +205,8 @@ final class ChatModel: ObservableObject {
             let turn = msg["turn"] as? Int ?? -1
             appendToken(msg["text"] as? String ?? "", turn: turn)
         case "cancel":
-            // The backend superseded the turn: stop mid-clause rather than
-            // finishing the sentence we were already handed.
+            // The backend superseded the turn — stop mid-clause rather than finishing
+            // the sentence we were already handed.
             audio.stopPlayback()
             activeTurn = nil
             awaitToken += 1
@@ -275,9 +271,8 @@ final class ChatModel: ObservableObject {
             }
             if let cur = msg["current"] as? Int { adoptCurrent(cur) }
         case "split":
-            // The model paused to use a tool. End this bubble and show the
-            // dots: the next thing it says is a separate remark, arriving
-            // after a wait the user should be able to see.
+            // The model paused to use a tool. End this bubble and show the dots; the
+            // next thing it says is a separate remark.
             activeTurn = nil
             showTyping = true
         case "session_opened":
@@ -289,9 +284,9 @@ final class ChatModel: ObservableObject {
                 return ChatMessage(role: role == "user" ? .user : .assistant,
                                    text: text, seq: takeSeq())
             }
-            // Cards come back with the conversation. Rebuilt from what was
-            // stored rather than replayed as tool calls: a restored reminder
-            // must not create itself in Reminders a second time.
+            // Cards come back with the conversation, rebuilt from what was stored
+            // rather than replayed as tool calls — a restored reminder must not
+            // create itself in Reminders again.
             cards = (msg["cards"] as? [[String: Any]] ?? []).compactMap { row in
                 guard let id = row["id"] as? String,
                       let name = row["name"] as? String,
@@ -394,8 +389,8 @@ final class ChatModel: ObservableObject {
         client.send(Wire.encode("session_delete", ["id": id]))
     }
 
-    /// Closing the last chat starts a fresh one rather than leaving an empty
-    /// window — there is always exactly one conversation in front of you.
+    /// Closing the last chat starts a fresh one, so there is always exactly one
+    /// conversation in front of you.
     func closeTab(_ id: Int) {
         openTabs.removeAll { $0 == id }
         if openTabs.isEmpty {
@@ -427,17 +422,17 @@ final class ChatModel: ObservableObject {
         sessions.first { $0.id == id }?.title ?? "New chat"
     }
 
-    /// ✕ on a reminder/event deletes the real Reminders/Calendar entry too —
-    /// the card *is* the reminder. Because that's destructive on a one-click
-    /// gesture, it leaves an Undo behind instead of vanishing.
+    /// ✕ on a reminder or event deletes the real entry too — the card is the
+    /// reminder. Destructive on a one-click gesture, so it leaves an Undo
+    /// behind rather than vanishing.
     func dismiss(_ card: HomeCard) {
-        // Stop the render too. Hiding the card while a minute of computation
-        // carried on for a picture nobody will see is not a dismissal.
+        // Stop the render too; hiding the card and letting it finish is not a
+        // dismissal.
         if card.kind == .image, card.status == .working {
             client.send(Wire.encode("card_cancel", ["id": card.id]))
         }
-        // Forget it on the backend as well, or it returns next time the chat is
-        // opened — a dismissed card that comes back is not dismissed.
+        // Forget it on the backend as well, or it comes back next time the chat
+        // is opened.
         client.send(Wire.encode("card_forget", ["id": card.id]))
         guard card.kind.writesToEventKit, let ext = card.externalID else {
             cards.removeAll { $0.id == card.id }
@@ -479,13 +474,13 @@ final class ChatModel: ObservableObject {
         }
     }
 
-    // MARK: - tool calls (Stage 3)
+    // MARK: - tool calls
 
     /// Raise the card immediately, then perform the real write. The backend
-    /// waits ~2 s for our verdict so what it says out loud matches what
-    /// happened — so always reply, success or failure.
-    /// Progress and results for a card the *backend* owns — image generation is
-    /// the only one, since every other tool is performed here in the app.
+    /// waits about two seconds for a verdict so the spoken reply matches what
+    /// happened, so always answer — success or failure.
+    /// Progress and results for a card the backend owns. Image generation is
+    /// the only one; every other tool is performed here in the app.
     private func applyCardUpdate(_ msg: [String: Any]) {
         guard let id = msg["id"] as? String,
               let i = cards.firstIndex(where: { $0.id == id }) else { return }
@@ -536,9 +531,8 @@ final class ChatModel: ObservableObject {
         _ card: HomeCard
     ) async throws -> (id: String?, data: [String: Any]?, lines: [String]) {
         switch card.kind {
-        // Drawn by the backend, which reports progress over card_update. It is
-        // filtered out before this is reached; the case is here so the switch
-        // stays exhaustive rather than silently falling through.
+        // Drawn by the backend and filtered out before this is reached. The
+        // case exists so the switch stays exhaustive.
         case .image:
             return (nil, nil, [])
         case .reminder:
@@ -567,8 +561,8 @@ final class ChatModel: ObservableObject {
             try await MacActions.runShortcut(named: card.args["name"] as? String ?? "")
             return (nil, nil, [])
         case .newShortcut:
-            // Opening the signed file makes Shortcuts show its Add sheet with
-            // every action listed — the user approves before it exists.
+            // Opening the signed file makes Shortcuts show its Add sheet,
+            // listing every action, so nothing is added unapproved.
             guard let path = card.args["path"] as? String else {
                 throw MacActions.Failure(message: "the shortcut file is missing")
             }
@@ -579,9 +573,8 @@ final class ChatModel: ObservableObject {
         }
     }
 
-    /// Fire the timer from the model, not the countdown view: the card lives in
-    /// a LazyVStack and may not be rendered when it runs out, and a timer that
-    /// only goes off while you happen to be looking at it is not a timer.
+    /// Fire the timer from the model rather than the countdown view: the card
+    /// lives in a LazyVStack and may not be rendered when it runs out.
     private func startTimer(_ card: HomeCard) {
         guard let ends = card.endsAt else { return }
         Task {

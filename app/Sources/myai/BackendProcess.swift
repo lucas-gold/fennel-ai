@@ -13,18 +13,17 @@ final class BackendProcess {
     private var process: Process?
     private(set) var bundled = false
 
-    /// Where the backend writes its log, so a user reporting a problem has
-    /// something to send and we aren't guessing.
+    /// Where the backend writes its log, so a problem report has something in
+    /// it.
     static let logURL = FileManager.default
         .homeDirectoryForCurrentUser
         .appendingPathComponent("Library/Logs/Fennel/backend.log")
 
     func start() {
         let res = Bundle.main.resourceURL
-        // "runtime/bin/Fennel" is a hard link to the same interpreter, there so
-        // that Activity Monitor names the process after the app rather than
-        // after python3.12 — the name comes from the path used to exec it.
-        // Older bundles have only the original name.
+        // "runtime/bin/Fennel" is a hard link to the same interpreter, so
+        // Activity Monitor names the process after the app. Older bundles have
+        // only the original name.
         let named = res?.appendingPathComponent("runtime/bin/Fennel")
         let plain = res?.appendingPathComponent("runtime/bin/python3.12")
         let interpreter = [named, plain].compactMap { $0 }.first {
@@ -54,9 +53,8 @@ final class BackendProcess {
         var env = ProcessInfo.processInfo.environment
         env["PYTHONUNBUFFERED"] = "1"
         env["PYTHONHOME"] = res!.appendingPathComponent("runtime").path
-        // So the backend cannot outlive us: if we are force-quit and never
-        // reach `stop()`, it notices this pid is gone and exits rather than
-        // holding the port against the next launch.
+        // So the backend cannot outlive us: if we are force-quit and never reach
+        // `stop()`, it notices this pid is gone and exits.
         env["FENNEL_PARENT_PID"] = String(ProcessInfo.processInfo.processIdentifier)
         task.environment = env
         if let handle {
@@ -75,8 +73,8 @@ final class BackendProcess {
         }
     }
 
-    /// Terminate on quit. Without this the Python child outlives the app and
-    /// holds the port, so the next launch silently talks to a stale backend.
+    /// Terminate on quit, or the Python child holds the port and the next
+    /// launch talks to a stale backend.
     func stop() {
         guard let p = process, p.isRunning else { return }
         p.terminate()

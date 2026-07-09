@@ -32,16 +32,9 @@ final class LaunchState: ObservableObject {
         started = true
         backend.start()
         chat.connect()
-        // The window shouldn't claim to be ready before the backend answers.
-        // First run also downloads models, which takes minutes, so this is a
-        // state the UI has to be able to sit in for a while.
-        // Ready means: socket open, models loaded, AND this session's history
-        // delivered. Dropping the overlay any earlier showed an empty chat that
-        // filled itself in a second later, which reads as a bug.
-        // Follows the backend for the life of the app rather than latching
-        // once. The model picker can be reopened from the chat, which puts the
-        // backend back into setup — with a one-shot gate that request went
-        // through and nothing appeared, so the button looked dead.
+        // Follows the backend for the life of the app rather than latching once:
+        // the picker can be reopened from the chat, which puts the backend back
+        // into setup.
         Task {
             while true {
                 let up = chat.connected && chat.setupPhase == "ready"

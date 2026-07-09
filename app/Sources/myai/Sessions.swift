@@ -33,8 +33,7 @@ struct ChatSession: Identifiable, Equatable {
 struct SessionBar: View {
     @EnvironmentObject var chat: ChatModel
     @State private var showHistory = false
-    /// Which row is asking "delete?". A saved conversation cannot be got back,
-    /// so it asks — a model can at least be re-downloaded and that asks too.
+    /// Which row is asking "delete?". A saved conversation cannot be got back.
     @State private var confirmingDelete: Int?
 
     var body: some View {
@@ -51,9 +50,8 @@ struct SessionBar: View {
                 }
                 Spacer(minLength: 8)
 
-                // A popover rather than a Menu: a menu is an NSMenu, and its
-                // rows cannot hold their own buttons, so opening and deleting
-                // had to be two separate lists of the same conversations.
+                // A popover rather than a Menu: an NSMenu row cannot hold its own
+                // buttons, so opening and deleting would need two separate lists.
                 IconButton(symbol: "clock.arrow.circlepath", help: "Past chats") {
                     chat.refreshSessions()
                     confirmingDelete = nil
