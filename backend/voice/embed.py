@@ -6,9 +6,8 @@ and sentence-transformers pulls its own torch stack. This file is ~120 lines,
 adds no dependency the app doesn't already have, and runs on the GPU alongside
 the LLM. Validated against transformers/torch in tools/check_embed.py.
 
-bge-small-en-v1.5: 33M params, 384 dims, MIT licensed (the licence matters —
-D-DISTRIB, this is a paid product). CLS pooling + L2 norm, which is what the
-model was trained for; mean pooling here measurably degrades retrieval.
+bge-small-en-v1.5: 33M params, 384 dims, MIT licensed. CLS pooling and L2 norm,
+which is what the model was trained for — mean pooling degrades retrieval.
 """
 from __future__ import annotations
 

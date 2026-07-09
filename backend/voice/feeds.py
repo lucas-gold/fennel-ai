@@ -94,14 +94,10 @@ def weather(lat: float, lon: float,
             label: str) -> Optional[tuple[str, list[dict]]]:
     """Today's forecast as hour-by-hour lines, not a snapshot.
 
-    The briefing is fetched once and then sits in the prompt all day, so a
-    "current temperature" captured at fetch time is wrong within the hour — it
-    was reporting the overnight low as the current temp in the afternoon.
-    Instead we ship the whole day's hourly series. The row for the current hour
-    is also resolved in code and put in the per-turn `<context>` block — asking
-    a 4-bit 4B model to match a clock against a 24-row table does not work: it
-    answered "what's it like at 3pm" correctly and "what's it like now" with the
-    overnight low.
+    The briefing is fetched once and sits in the prompt all day, so a
+    temperature captured at fetch time is wrong within the hour. The row for
+    the current hour is resolved in code and added to the per-turn <context>
+    block, since small models match a clock against a 24-row table badly.
 
     Open-Meteo: free, no key, no account.
     """
@@ -143,14 +139,12 @@ def weather(lat: float, lon: float,
 def wiki_search(query: str, limit: int = 2) -> list[Item]:
     """Look something up on Wikipedia. Free, keyless, no account, no quota.
 
-    This is an encyclopedia lookup, not a general web search — it won't find
-    "best pizza near me" or this morning's news. But it does cover the large
-    class of questions a small local model gets wrong or is out of date on
-    (people, places, definitions, history), which is most of what "search the
-    internet" is actually asked for here.
+    An encyclopedia lookup, not a general web search: no "best pizza near me"
+    and no this morning's news, but it covers the people, places, definitions
+    and history a small local model gets wrong or is out of date on.
 
-    One request: `generator=search` feeds the search hits straight into
-    `prop=extracts`, so we get ranked results *and* their intro text together.
+    One request — `generator=search` feeds the hits straight into
+    `prop=extracts`, giving ranked results and their intro text together.
     Content is CC BY-SA, so the source and link travel with it.
     """
     q = urllib.parse.urlencode({
