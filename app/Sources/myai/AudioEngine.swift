@@ -1,15 +1,14 @@
 import AVFoundation
 
-/// Native capture + playback through AVAudioEngine with voice-processing I/O.
+/// Capture and playback through AVAudioEngine with voice-processing I/O.
 ///
-/// `setVoiceProcessingEnabled(true)` is the whole reason capture is native (D6):
-/// it gives acoustic echo cancellation, so the mic doesn't hear Kokoro through
-/// the speakers and barge-in doesn't fire on the assistant's own voice. Playback
-/// must go through the *same* engine's output for the AEC reference to work.
+/// `setVoiceProcessingEnabled(true)` is why capture is native: it gives
+/// acoustic echo cancellation, so the mic doesn't hear Kokoro through the
+/// speakers. Playback has to go through the same engine's output for the
+/// echo reference to work.
 ///
-/// The engine therefore runs in one of three modes, and switching modes builds a
-/// brand-new engine (see `setMode`) — that is what keeps the microphone closed
-/// when the user hasn't tapped to talk.
+/// The engine runs in one of three modes and switching builds a brand-new
+/// one, which is what keeps the microphone closed until the user taps.
 ///
 /// Mic in  : 512-sample int16 mono @16 kHz frames (`onMicFrame`).
 /// Audio out: int16 PCM @24 kHz, scheduled per clause (`play`).
@@ -23,12 +22,11 @@ final class AudioEngine {
     private var mode: Mode = .off
     private var wantMic = false
     private var micGranted = false
-    /// Hardware echo cancellation. Off by default because it cannot be had
-    /// without ducking: `AVAudioVoiceProcessingOtherAudioDuckingLevel` offers
-    /// Default/Min/Mid/Max and no "off", so enabling voice processing always
-    /// quiets whatever else you're listening to. Fennel still rejects its own
-    /// voice in software — a stricter barge-in gate while it speaks, plus a
-    /// transcript check — so this is the belt rather than the braces.
+    /// Hardware echo cancellation, off by default: it can't be had without
+    /// ducking, since AVAudioVoiceProcessingOtherAudioDuckingLevel offers
+    /// Default/Min/Mid/Max and no "off". Fennel rejects its own voice in
+    /// software too — a stricter barge-in gate and a transcript check — so
+    /// this is the belt rather than the braces.
     var echoCancellation = UserDefaults.standard.bool(forKey: "echoCancellation")
     private var queued = 0                // clauses still scheduled on the player
 
@@ -49,17 +47,17 @@ final class AudioEngine {
 
     // MARK: - lifecycle
 
-    /// Note what we're already allowed to do. Deliberately does not prompt and
-    /// does not start the engine — nothing touches the mic until the user taps
-    /// to talk, so the permission prompt lands when the reason for it is obvious.
+    /// Note what we are already allowed to do. Does not prompt and does not
+    /// start the engine: nothing touches the mic until the user taps, so the
+    /// permission prompt lands when the reason for it is obvious.
     func prepare() {
         micGranted = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
     }
 
-    /// Rebuild the graph for `want`. A fresh `AVAudioEngine` each time is the
-    /// point, not laziness: disabling voice processing on a reused input node
-    /// leaves the input stream open, and a playback-only engine that never
-    /// touches `inputNode` is provably not recording.
+    /// Rebuild the graph for `want`. A fresh AVAudioEngine each time, because
+    /// disabling voice processing on a reused input node leaves the input
+    /// stream open — and an engine that never touches `inputNode` is provably
+    /// not recording.
     private func setMode(_ want: Mode) {
         guard want != mode else { return }
         teardown()
@@ -80,9 +78,9 @@ final class AudioEngine {
                     }
                 }
                 let inFormat = engine.inputNode.outputFormat(forBus: 0)
-                // Voice processing inflates the mono mic to a 7-channel stream and
-                // AVAudioConverter's multichannel downmix yields silence — so we
-                // take channel 0 and convert that mono stream to 16 kHz.
+                // Voice processing inflates the mono mic to a 7-channel stream, and
+                // AVAudioConverter's multichannel downmix yields silence. Take channel
+                // 0 and convert that to 16 kHz.
                 let mono = AVAudioFormat(commonFormat: .pcmFormatFloat32,
                                          sampleRate: inFormat.sampleRate,
                                          channels: 1, interleaved: false)!
@@ -93,17 +91,15 @@ final class AudioEngine {
                 }
                 engine.prepare()
                 try engine.start()
-                // Attach playback AFTER the engine is running. With voice processing
-                // enabled, connecting a player *before* start makes the VP output node
-                // fail to initialise (-10875, which surfaced as a CreateRecordingTap
-                // NSException / SIGABRT). A post-start connect reconfigures cleanly.
+                // Attach playback after the engine is running. With voice processing on,
+                // connecting a player first makes the VP output node fail to initialise
+                // (-10875, surfacing as a CreateRecordingTap NSException).
                 engine.attach(player)
                 engine.connect(player, to: engine.mainMixerNode, format: tts24k)
             } else {
-                // The opposite order, and not a style choice: `prepare()` on a graph
-                // with nothing attached raises "inputNode != nullptr || outputNode
-                // != nullptr" — an ObjC exception Swift cannot catch, so the app
-                // dies. Connecting the player first gives the graph its output node.
+                // The opposite order here, and not a style choice: `prepare()` on a graph
+                // with nothing attached raises an ObjC exception Swift cannot catch.
+                // Connecting the player first gives the graph its output node.
                 engine.attach(player)
                 engine.connect(player, to: engine.mainMixerNode, format: tts24k)
                 engine.prepare()
@@ -111,9 +107,8 @@ final class AudioEngine {
             }
             player.play()
             mode = want
-            // Report AEC state explicitly: if voice processing silently fails to
-            // engage, the assistant hears itself through the speakers and there
-            // is nothing else in the logs that would say so.
+            // Report the echo-cancellation state explicitly: if voice processing
+            // fails to engage, nothing else in the logs would say so.
             let aec = mic ? (engine.inputNode.isVoiceProcessingEnabled ? "AEC on" : "AEC OFF") : "no mic"
             print("[audio] mode=\(want) mic=\(mic ? "OPEN" : "closed") \(aec)")
         } catch {

@@ -1,25 +1,19 @@
 import SwiftUI
 
-/// The startup model picker.
+/// Which model is loaded is the biggest difference between two sessions of
+/// Fennel — speed, memory, whether its tools work at all — so it is a
+/// choice at launch rather than a setting behind a gear.
 ///
-/// Which model is loaded is the biggest single difference between two sessions
-/// of Fennel — how fast it answers, how much RAM it holds, whether it will
-/// write you fiction, whether its tools work at all. That is worth a deliberate
-/// choice at launch rather than a setting buried behind a gear.
-///
-/// The rows come entirely from the backend (`config.MODELS` plus what is on
-/// disk), so adding a model never touches this file.
+/// The rows come from the backend, so adding a model never touches this
+/// file.
 struct ModelPicker: View {
     @EnvironmentObject var chat: ChatModel
 
-    /// Selecting and committing are deliberately two presses. The first press
-    /// only highlights: committing can mean a multi-gigabyte download and
-    /// always means a minute of loading, which is far too much to hang on a
-    /// stray click in a list.
+    /// Selecting and committing are two presses. Committing can mean a
+    /// multi-gigabyte download and always means a minute of loading.
     @State private var pending: String?
-    /// Which row is asking "delete?". Deleting means re-downloading gigabytes
-    /// to undo, so it asks first — and asks in place, because a sheet over a
-    /// list this small hides the thing being talked about.
+    /// Which row is asking "delete?". Asked in place rather than in a sheet,
+    /// which would hide the list being talked about.
     @State private var confirmingDelete: String?
     /// A Hugging Face path the user is considering.
     @State private var customPath = ""
@@ -39,8 +33,8 @@ struct ModelPicker: View {
                     .font(.system(size: 11)).foregroundStyle(.orange)
             }
 
-            // Pinned above the list, not scrolled with it: it is a switch that
-            // applies whatever you pick below, so it should not slide away.
+            // Pinned above the list rather than scrolled with it: it is a switch
+            // applying to whatever you pick below.
             if let img = chat.imageModel { imageRow(img) }
 
             ScrollView {
@@ -58,10 +52,7 @@ struct ModelPicker: View {
 
             confirmBar
 
-            // No hint that anything is hidden — that is the point of hiding it.
-            // The path is a dot-directory, so it is easier to open than to
-            // navigate to; saying where they live and not offering to show you
-            // was half an answer.
+            // The path is a dot-directory, easier to open than to navigate to.
             Button {
                 let dir = FileManager.default.homeDirectoryForCurrentUser
                     .appendingPathComponent(".cache/huggingface/hub")
@@ -81,8 +72,7 @@ struct ModelPicker: View {
         .padding(.bottom, 10)
     }
 
-    /// Measured, not advertised: the free figure is what decides whether the
-    /// next model down the list will actually fit.
+    /// Free memory is what decides whether the next model down the list fits.
     private var ramLine: String {
         guard chat.systemTotalBytes > 0 else { return "Reading memory…" }
         let free = max(0, chat.systemTotalBytes - chat.systemUsedBytes)
@@ -90,9 +80,8 @@ struct ModelPicker: View {
              + "Available RAM: \(ModelOption.gb(free))"
     }
 
-    /// The picture model, above the language models and not one of them: it is
-    /// a switch rather than a choice, since it never runs on its own — you still
-    /// have to pick something to talk to.
+    /// The picture model, above the language models and not one of them: a
+    /// switch rather than a choice, since you still pick something to talk to.
     private func imageRow(_ m: ModelOption) -> some View {
         HStack(spacing: 10) {
             Image(systemName: "photo.artframe")
@@ -139,10 +128,9 @@ struct ModelPicker: View {
                                   : Color.primary.opacity(0.07), lineWidth: 1)))
     }
 
-    /// The same sentence whether or not it is downloaded — what it costs does
-    /// not change with that, and the download is stated once, on the button.
-    /// A range because it is one: full size wants a lot more than the smaller
-    /// picture it falls back to when memory is short.
+    /// The same sentence whether or not it is downloaded; the download is
+    /// stated once, on the button. A range because full size wants much more
+    /// than the smaller picture it falls back to.
     private func imageState(_ m: ModelOption) -> String {
         let size = ModelOption.gb(m.bytes)
         guard m.peakBytes > 0 else { return size }
@@ -151,9 +139,8 @@ struct ModelPicker: View {
         return "\(size)  ·  \(lo)–\(hi) GB in memory during image generation only"
     }
 
-    /// Paste any MLX model from Hugging Face. Checked before it is kept —
-    /// config and chat template are a few kilobytes, and everything that goes
-    /// wrong with an unfamiliar model is visible in them.
+    /// Paste any MLX model from Hugging Face. Its config and chat template are
+    /// a few kilobytes, so they are checked before anything is downloaded.
     @ViewBuilder private var customField: some View {
         VStack(alignment: .leading, spacing: 5) {
             HStack(spacing: 6) {
@@ -229,9 +216,9 @@ struct ModelPicker: View {
         chat.setupModels.first { $0.id == (pending ?? chat.setupCurrent) }
     }
 
-    /// Everything that still has to come down the wire before this can run:
-    /// the language model, and the picture model if it is switched on. Stated
-    /// as one figure on the button rather than as a warning on each row.
+    /// Everything still to be downloaded before this can run: the language
+    /// model, and the picture model if it is switched on. One figure on the
+    /// button rather than a warning on each row.
     private var pendingDownload: Int {
         var total = 0
         if let m = chosen, !m.installed { total += m.bytes }
@@ -267,14 +254,14 @@ struct ModelPicker: View {
         }
     }
 
-    // Split out of `row` deliberately: as one expression the whole card was too
-    // much for the type checker to infer in reasonable time.
+    // Split out of `row`: as one expression the card takes the type checker
+    // far too long to infer.
     private func rowBody(_ m: ModelOption) -> some View {
         HStack(alignment: .top, spacing: 12) {
             VStack(alignment: .leading, spacing: 4) {
                 titleLine(m)
-                // A custom row has no description — nobody wrote one — so it
-                // simply omits the line rather than leaving a gap.
+                // A custom row has no description, so it omits the line rather than
+                // leaving a gap.
                 if !m.focus.isEmpty {
                     Text(m.focus)
                         .font(.system(size: 11))
@@ -315,9 +302,9 @@ struct ModelPicker: View {
             } else {
                 ModelSourceLink(model: m)
             }
-            // "In use" means the weights are still resident — reopening the
-            // picker does not unload them, so returning to the same model is
-            // free. The x makes that untrue when the RAM is wanted back.
+            // "In use" means the weights are still resident: reopening the picker
+            // does not unload them, so returning to the same model is free. The x
+            // makes that untrue when the memory is wanted back.
             if m.id == chat.loadedModelID {
                 HStack(spacing: 3) {
                     Text("IN USE").font(.system(size: 8.5, weight: .bold))
@@ -348,15 +335,13 @@ struct ModelPicker: View {
         HStack(spacing: 10) {
             Label(disk, systemImage: m.installed ? "internaldrive" : "arrow.down.circle")
                 .foregroundStyle(m.installed ? Color.green : Color.secondary)
-            // Everything, not just the weights: the number people want is
-            // "what will Fennel be holding if I pick this", and splitting the
-            // model from its fixed companions only made that a sum to do.
+            // Everything, not just the weights — the question is what Fennel will be
+            // holding if you pick this, and splitting it leaves a sum to do.
             Label("~\(ModelOption.gb(m.bytes + chat.overheadBytes + chat.appBytes)) in memory",
                   systemImage: "memorychip")
                 .foregroundStyle(Color.secondary)
-            // Stated plainly rather than hidden: on a model whose template
-            // ignores `tools=`, reminders, timers, the agenda and web search
-            // simply do not exist.
+            // Stated plainly: on a model whose template ignores `tools=`, reminders,
+            // timers, the agenda and web search do not exist.
             if !m.tools {
                 Label("No tools", systemImage: "wrench.and.screwdriver")
                     .foregroundStyle(Color.orange)

@@ -1,19 +1,17 @@
 import SwiftUI
 
 /// One place for the visual language, so spacing and radii stay consistent
-/// instead of being re-invented per view.
+/// across views.
 ///
-/// The look is deliberately quiet: a calm surface, one accent gradient that only
-/// the orb and the user's own words get to use, and generous whitespace. A voice
-/// app is mostly *looked at* while it talks, so the screen should reward a
-/// glance and never compete with the conversation.
+/// The look is deliberately quiet: a calm surface, one accent gradient used
+/// only by the orb and the user's own words, and generous whitespace. The
+/// screen should reward a glance without competing with the conversation.
 enum Theme {
     static let radius: CGFloat = 14
     static let cardRadius: CGFloat = 18
     static let gutter: CGFloat = 20
-    /// The one surface everything that isn't the user speaks from: assistant
-    /// replies and tool cards share it, so a card reads as part of the
-    /// conversation rather than a widget dropped into it.
+    /// The one surface everything that isn't the user speaks from, so a tool
+    /// card reads as part of the conversation rather than a widget in it.
     static let bubble = Color.white.opacity(0.055)
     static let bubbleRadius: CGFloat = 18
 

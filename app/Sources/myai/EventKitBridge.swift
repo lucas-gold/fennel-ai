@@ -1,7 +1,7 @@
 import EventKit
 import Foundation
 
-/// The real side effects behind `set_reminder` / `add_event` (D-HOME).
+/// The real side effects behind `set_reminder` and `add_event`.
 ///
 /// The backend never touches EventKit — it only normalizes arguments into
 /// absolute local times. This is the only place that writes to the user's data,
@@ -22,8 +22,7 @@ enum EventKitBridge {
         f.locale = Locale(identifier: "en_US_POSIX")
         f.timeZone = .current
         // Fractional seconds first: Python's isoformat() includes microseconds
-        // unless explicitly stripped, and a parser that only accepts whole
-        // seconds fails silently, which is worse than loudly.
+        // unless stripped, and a whole-seconds parser fails silently on them.
         for format in ["yyyy-MM-dd'T'HH:mm:ss.SSSSSS", "yyyy-MM-dd'T'HH:mm:ss.SSS",
                        "yyyy-MM-dd'T'HH:mm:ss", "yyyy-MM-dd'T'HH:mm"] {
             f.dateFormat = format
@@ -69,8 +68,7 @@ enum EventKitBridge {
     }
 
     /// Read back what's already scheduled, for the `agenda` tool. Returns lines
-    /// the model can simply speak, plus the count, since it only needs to say
-    /// them — not reason over the structure.
+    /// the model can speak directly, plus a count.
     static func agenda(range: String) async throws -> (lines: [String], count: Int) {
         let cal = Calendar.current
         let now = Date()
@@ -116,8 +114,8 @@ enum EventKitBridge {
         return (out.map(\.1), out.count)
     }
 
-    /// Deleting something already gone is success, not an error — the user may
-    /// have removed it in Reminders/Calendar before dismissing the card.
+    /// Deleting something already gone is success: the user may have removed it
+    /// in Reminders or Calendar before dismissing the card.
     static func deleteReminder(id: String) async throws {
         guard try await store.requestFullAccessToReminders() else {
             throw DeniedError(what: "Reminders")

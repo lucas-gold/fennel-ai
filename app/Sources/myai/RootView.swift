@@ -41,10 +41,9 @@ struct RootView: View {
 
 /// Shown until the backend reports its models are loaded.
 ///
-/// The consent step is the point of this screen. Fennel's claim is that it runs
-/// on your machine, so the one moment it needs the network is the moment that
-/// most deserves asking — and the backend makes no request at all until the
-/// button here is pressed.
+/// The consent step is the point of this screen: Fennel runs on your
+/// machine, and the backend makes no request at all until the button here
+/// is pressed.
 private struct FirstRunOverlay: View {
     @EnvironmentObject var chat: ChatModel
     @State private var breathe = false
@@ -110,8 +109,8 @@ private struct FirstRunOverlay: View {
                     .multilineTextAlignment(.center)
                 if chat.setupEta > 1 { Countdown(seconds: chat.setupEta) }
 
-                // Measured, not estimated. The step labels are a plan; this is
-                // what the machine is actually holding while it happens.
+                // Measured, not estimated — the step labels are a plan, this is what the
+                // machine is holding while it happens.
                 if chat.systemTotalBytes > 0 {
                     Text(memoryLine)
                         .font(.system(size: 10).monospacedDigit())
@@ -136,9 +135,8 @@ private struct FirstRunOverlay: View {
                         .progressViewStyle(.linear)
                         .frame(width: 340)
                     HStack(alignment: .firstTextBaseline) {
-                        // Two lines, not one: a long repo name plus the running
-                        // total does not fit the bar's width, and the size was
-                        // what got cut — the one part that changes.
+                        // Two lines: a long repo name and the running total together overflow
+                        // the bar's width, and it was the size that got cut.
                         Text(chat.setupDetail.isEmpty ? "Starting…" : chat.setupDetail)
                             .font(.system(size: 11)).foregroundStyle(.secondary)
                             .monospacedDigit()
@@ -146,8 +144,8 @@ private struct FirstRunOverlay: View {
                             .fixedSize(horizontal: false, vertical: true)
                             .multilineTextAlignment(.leading)
                         Spacer(minLength: 10)
-                        // The percentage, plainly. A bar alone gives no sense of
-                        // whether a multi-gigabyte download is worth waiting out.
+                        // The percentage, plainly. A bar alone gives no sense of whether a
+                        // multi-gigabyte download is worth waiting out.
                         Text("\(Int(chat.setupProgress * 100))%")
                             .font(.system(size: 11, weight: .semibold).monospacedDigit())
                             .foregroundStyle(.secondary)
@@ -183,9 +181,9 @@ private struct FirstRunOverlay: View {
     }
 }
 
-/// Counts down from the backend's estimate, which is the duration the *last*
-/// successful start actually took rather than a guess. Stops at "any moment now"
-/// instead of going negative or pretending to be precise.
+/// Counts down from the backend's estimate, which is how long the last
+/// successful start actually took. Stops at "any moment now" rather than
+/// going negative.
 private struct Countdown: View {
     let seconds: Double
     @State private var start = Date()
@@ -212,8 +210,8 @@ private struct HomePanel: View {
         VStack(spacing: 0) {
             header
             orbSection
-            // Only live things live here now. Everything a turn *produced* sits
-            // in the transcript, at the point it happened.
+            // Only live things belong here; everything a turn produced sits in the
+            // transcript, at the point it happened.
             if !chat.pinnedCards.isEmpty { pinned }
             if !stacked { Spacer(minLength: 0) }
         }
@@ -251,10 +249,9 @@ private struct HomePanel: View {
         .padding(.top, 14)
     }
 
-    /// The orb is the *voice* surface. During a text-only exchange the mic is
-    /// shut, so lighting it amber for "thinking" made a closed microphone look
-    /// active — the typing dots in the transcript are the right feedback there.
-    /// It still turns green when speech is actually coming out of the speakers.
+    /// The orb is the voice surface. In a text-only exchange the mic is shut,
+    /// so it stays dark for "thinking" — the typing dots are the feedback
+    /// there. It still turns green when speech is coming out of the speakers.
     private var orbState: AssistantState {
         if chat.listening || chat.state == .speaking { return chat.state }
         return .idle
@@ -280,8 +277,8 @@ private struct HomePanel: View {
         .padding(.vertical, stacked ? 16 : 28)
     }
 
-    /// Which model is answering, and what it is costing — sat at the foot of
-    /// the orb column, out of the way of the conversation but always visible.
+    /// Which model is answering and what it costs, at the foot of the orb
+    /// column — out of the way of the conversation but always visible.
     private var modelFooter: some View {
         VStack(spacing: 5) {
             Button { chat.reopenModelPicker() } label: {
@@ -309,7 +306,7 @@ private struct HomePanel: View {
     }
 
     /// Model, then the machine. Free matters more than used when the question
-    /// is "can I switch to the 14B", so both are shown.
+    /// is whether a bigger model will fit, so both are shown.
     private var memoryLine: String {
         func gb(_ n: Int) -> String { String(format: "%.1f", Double(n) / 1_073_741_824) }
         let free = max(0, chat.systemTotalBytes - chat.systemUsedBytes)
@@ -330,9 +327,9 @@ private struct HomePanel: View {
 
 }
 
-/// The orb. Three concentric layers that each read at a glance: a soft halo that
-/// breathes with mic level, a glass body, and the state colour. Motion is slow
-/// and continuous — a fast or jittery orb makes the whole app feel anxious.
+/// The orb: a halo that breathes with mic level, a glass body, and the
+/// state colour. Motion is slow and continuous — a jittery orb makes the
+/// whole app feel anxious.
 private struct VoiceOrb: View {
     let state: AssistantState
     let listening: Bool
@@ -353,9 +350,9 @@ private struct VoiceOrb: View {
                 .scaleEffect(swell)
                 .animation(.easeOut(duration: 0.12), value: level)
 
-            // Concentric rings drifting outward. Staggered so they read as one
-            // slow pulse rather than three things moving; each fades as it goes,
-            // which is what stops it looking like a loading spinner.
+            // Concentric rings drifting outward, staggered so they read as one
+            // slow pulse. Each fades as it goes, which keeps it from looking
+            // like a loading spinner.
             ForEach(0..<3, id: \.self) { i in
                 let delay = Double(i) * 1.5
                 Circle()
@@ -367,10 +364,8 @@ private struct VoiceOrb: View {
                                 .delay(delay), value: pulse)
             }
 
-            // No rim and no symbol inside. A hard white edge made it read as a
-            // button, and the mic glyph put a piece of UI at the centre of the
-            // one thing that should just look like presence. State is carried by
-            // colour and motion; the word underneath says the rest.
+            // No rim and no symbol inside: an edge makes it read as a button,
+            // and a glyph puts UI where the voice should be.
             Circle()
                 .fill(LinearGradient(colors: colors,
                                      startPoint: .topLeading, endPoint: .bottomTrailing))
@@ -397,10 +392,9 @@ private struct VoiceOrb: View {
 
 /// Everything network-related behind one control, off by default.
 ///
-/// The wording is deliberate: this app's claim is that nothing leaves the
-/// machine, so the exception has to be legible. The daily briefing reads a fixed
-/// source list and reveals nothing about the user; search sends their actual
-/// question. Two switches, because those are two different promises.
+/// Two switches rather than one, because they are two different promises:
+/// the daily briefing reads a fixed source list and reveals nothing about
+/// the user, while search sends their actual question.
 private struct SettingsMenu: View {
     @EnvironmentObject var chat: ChatModel
     @State private var open = false
@@ -423,8 +417,8 @@ private struct SettingsMenu: View {
                             .foregroundStyle(.tertiary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
-                    // Attribution belongs where the switches are, not only in a
-                    // licences sheet: these are the parties data reaches.
+                    // Attribution belongs where the switches are, not only in a licences
+                    // sheet: these are the parties data reaches.
                     Text("When on, Fennel uses Wikipedia (CC BY-SA), Open-Meteo (CC BY 4.0), BBC/NPR/Ars Technica feeds, and Ollama for web search.")
                         .font(.system(size: 10))
                         .foregroundStyle(.tertiary)
@@ -480,9 +474,9 @@ private struct SettingsMenu: View {
         .sheet(isPresented: $showLicenses) { LicensesView() }
     }
 
-    /// Optional upgrade: the user's own Ollama key turns on live web search.
-    /// Deliberately presented as an extra rather than a requirement — Wikipedia
-    /// stays the default so the app is fully useful with no account anywhere.
+    /// The user's own Ollama key turns on live web search. An extra rather
+    /// than a requirement — Wikipedia stays the default, so the app is fully
+    /// useful with no account anywhere.
     @ViewBuilder private var webSearchKey: some View {
         VStack(alignment: .leading, spacing: 5) {
             HStack(spacing: 6) {
@@ -599,11 +593,8 @@ private struct ChatPanel: View {
         VStack(spacing: 0) {
             Divider()
             HStack(spacing: 10) {
-                // A rounded rectangle, not a capsule: a capsule's end caps are
-                // half its height, so as the field grew past one line the curve
-                // ate into the text. The cap of 5 lines also cut off a message
-                // still being typed — 14 is roughly a third of the window and
-                // scrolls past that.
+                // A rounded rectangle rather than a capsule, whose end caps
+                // are half its height and eat into a field of several lines.
                 TextField(chat.busy ? chat.busyDetail : "Message",
                           text: $draft, axis: .vertical)
                     .textFieldStyle(.plain)
@@ -660,11 +651,8 @@ private struct ChatPanel: View {
     }
 }
 
-/// A tool result inside the conversation.
-///
-/// Searches are the exception and get a single line rather than a card: the
-/// answer is already in the reply above, so a card would repeat it. What is
-/// genuinely useful is where it came from and a way to open it.
+/// Searches get a single line rather than a card: the answer is already in
+/// the reply above, so what is useful is the source and a way to open it.
 private struct TranscriptCard: View {
     @EnvironmentObject var chat: ChatModel
     let card: HomeCard
@@ -703,20 +691,18 @@ private struct TranscriptCard: View {
     }
 }
 
-/// Assistant replies are plain text on the page; only the user gets a bubble.
-/// Two bubble styles facing each other is heavier than this needs to be, and the
-/// asymmetry makes it obvious at a glance who said what.
+/// Assistant replies are plain text on the page; only the user gets a
+/// bubble. The asymmetry makes it obvious at a glance who said what.
 private struct MessageRow: View {
     let message: ChatMessage
 
     /// Render the model's markdown rather than printing its asterisks.
     ///
-    /// `inlineOnlyPreservingWhitespace` is the important part: the default
-    /// parser collapses newlines, which turns a list into one run-on line.
-    /// Partial markdown arrives constantly while streaming — `**bol` — and that
-    /// simply renders literally until the closing pair lands, so no special
-    /// casing is needed for it. Speech is unaffected: `speakable()` strips the
-    /// same syntax before Kokoro ever sees it.
+    /// `inlineOnlyPreservingWhitespace` matters: the default parser collapses
+    /// newlines and turns a list into one run-on line. Partial markdown arriving
+    /// mid-stream renders literally until its closing pair lands, so it needs no
+    /// special casing. Speech is unaffected — `speakable()` strips the same
+    /// syntax before Kokoro sees it.
     private var rendered: AttributedString {
         let options = AttributedString.MarkdownParsingOptions(
             allowsExtendedAttributes: false,

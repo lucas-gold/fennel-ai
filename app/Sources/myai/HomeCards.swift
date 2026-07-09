@@ -1,7 +1,7 @@
 import SwiftUI
 
-/// A card raised on the home screen by a backend tool call (D-HOME). The card
-/// is the visible half of the tool call; `EventKitBridge` is the real half.
+/// A card raised by a backend tool call. The card is the visible half;
+/// `EventKitBridge` is the real half.
 struct HomeCard: Identifiable {
     enum Kind: String {
         case reminder = "set_reminder"
@@ -147,20 +147,19 @@ struct HomeCard: Identifiable {
         case .search:
             let hits = args["results"] as? [[String: Any]] ?? []
             let names = hits.compactMap { $0["title"] as? String }
-            // The query leads, not the top hit. Wikipedia's first result isn't
-            // always the one the reply drew on, and showing only that made the
-            // card look confidently wrong ("My Bed" for a question about beds).
+            // The query leads, not the top hit: the first result isn't always the
+            // one the reply drew on, and showing only that reads as confidently
+            // wrong.
             title = args["query"] as? String ?? "Search"
             searchSource = args["source"] as? String ?? "Wikipedia"
-            // Just the source and a count. Joining every result title made the
-            // subheading longer than the card — a web search returns five.
+            // Just the source and a count — joining five result titles makes the
+            // subheading longer than the card.
             subtitle = names.count > 1
                 ? "\(searchSource) · \(names.count) results"
                 : searchSource
             body = hits.first?["extract"] as? String
-            // Web result titles run long ("… | CoinMarketCap"), so the other
-            // hits are listed short — enough to see what was found without the
-            // card turning into a wall of headlines.
+            // Web result titles run long, so the other hits are listed short:
+            // enough to see what was found without a wall of headlines.
             items = names.count > 1
                 ? names.dropFirst().prefix(3).map {
                     $0.count > 58 ? String($0.prefix(56)) + "…" : $0
@@ -173,8 +172,8 @@ struct HomeCard: Identifiable {
 
     /// Article link for a `.search` card, shown as a "Read more" button.
     var searchLink: URL?
-    /// Which source answered — the link label said "Wikipedia" even for a web
-    /// search, which was simply untrue about where the button went.
+    /// Which source answered, so the link label names where the button
+    /// actually goes.
     var searchSource = "Wikipedia"
 
     /// When a `.timer` card fires. The countdown is drawn from this rather than
@@ -204,8 +203,8 @@ struct HomeCardView: View {
     let card: HomeCard
     /// Full-size preview for a generated picture.
     @State private var expanded = false
-    /// Whether this picture has been copied to Downloads. Pictures are kept in
-    /// the app's own folder until asked for — most are a look, not a keeper.
+    /// Whether this picture has been copied to Downloads. Pictures stay in the
+    /// app's own folder until asked for.
     @State private var saved = false
     let onDismiss: () -> Void
     var onUndo: () -> Void = {}
@@ -232,8 +231,8 @@ struct HomeCardView: View {
 
     private var full: some View {
         HStack(alignment: .top, spacing: 12) {
-            // The colour lives in the glyph, not behind it. A filled disc made
-            // every card shout for attention in a column of quiet bubbles.
+            // The colour lives in the glyph, not behind it: a filled disc makes
+            // every card shout in a column of quiet bubbles.
             Image(systemName: card.kind.icon)
                 .font(.system(size: 15, weight: .medium))
                 .foregroundStyle(card.kind.tint)
@@ -241,9 +240,8 @@ struct HomeCardView: View {
                 .padding(.top, 1)
 
             VStack(alignment: .leading, spacing: 3) {
-                // A picture card has no title: its description is the whole of
-                // what it is, and a truncated version of it above the full text
-                // said nothing twice.
+                // A picture card has no title — its description is what it is, and a
+                // truncated copy above the full text says nothing twice.
                 if !card.title.isEmpty {
                     Text(card.title)
                         .font(.system(size: 13, weight: .semibold))
