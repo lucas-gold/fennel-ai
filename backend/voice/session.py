@@ -63,6 +63,14 @@ _DRAWY = re.compile(
     r"|\bimagine\s+(a|an|the)\b"
     r"|^\s*(please\s+)?(draw|sketch|paint|render)\s+(me\s+)?(a|an|the)\b", re.I)
 
+# A follow-up asking to change the last picture. Only consulted when one has
+# already been drawn, so "make it bigger" in any other context is left alone.
+_EDIT_IMAGE = re.compile(
+    r"\b(again|instead|redo|retry)\b"
+    r"|^\s*(please\s+)?(make|try|do)\s+(it|that|the|this)\b"
+    r"|\bmake\s+(it|that|the|this)\b[^.?!]{0,40}\b(more|less|bigger|smaller|"
+    r"brighter|darker|wider|closer|clearer|visible)\b", re.I)
+
 # A request to write something the user will send or keep. Drafting runs colder:
 # the padding a warm sampler adds is where invented details live.
 _DRAFTY = re.compile(
@@ -102,6 +110,18 @@ def _words(text: str) -> list[str]:
 
 Control = Callable[[str], Awaitable[None]]   # send a JSON control string
 Audio = Callable[[bytes], Awaitable[None]]   # send a binary audio frame
+
+
+def _as_prompt(reply: str) -> str:
+    """The description out of a reply, or "" if it does not read like one.
+
+    The model answers a picture request with a paragraph describing the scene
+    and then an offer to adjust it. The paragraph is the prompt.
+    """
+    first = reply.strip().split("\n\n")[0].strip()
+    if len(first) < 60 or _PROMISE.match(first):
+        return ""
+    return first
 
 
 class Session:
@@ -147,6 +167,8 @@ class Session:
         self._last_reply_had_emoji = False
         self._rx = 0  # mic frames received (debug)
 
+        # The last picture's prompt, so a follow-up can build on it.
+        self._last_image_prompt = ""
         # Tool calls awaiting the app's real-world result, keyed by call id.
         self._pending: dict[str, asyncio.Future] = {}
 
@@ -498,7 +520,16 @@ class Session:
             await self._send_control(P.encode("stt", text=text))
         # The store keeps what the user said; the prompt gets the volatile preamble
         # glued on front, last in the prompt so the cached prefix survives.
+        editing_image = bool(self._last_image_prompt
+                             and _EDIT_IMAGE.search(text or ""))
         prompt_user = self._memory.preamble(self._session_id, text) + text
+        if editing_image:
+            prompt_user += (
+                f"\n<hint>\nThe picture you drew was: {self._last_image_prompt}\n"
+                "They want it changed. Describe the whole new picture in one "
+                "paragraph, carrying over everything they did not ask you to "
+                "change. Describe the picture itself, not what you are doing."
+                "\n</hint>")
         self._memory.remember(self._session_id, "user", text,
                               prompt_text=prompt_user)
         self._messages.append({"role": "user", "content": prompt_user})
@@ -670,11 +701,14 @@ class Session:
             drew = any(c["name"] == "generate_image" for c in calls)
             want_image = ((self._store.setting("images", "1") or "1") == "1"
                           and not drew and self._live(epoch)
-                          and (self._image_desc or _DRAWY.search(text or "")))
+                          and (self._image_desc or editing_image
+                               or _DRAWY.search(text or "")))
             if want_image:
-                # Prefer the model's own description, a richer prompt than the bare
-                # request, falling back to what the user said.
-                self._image_desc = self._image_desc or (text or "")
+                # The model usually describes the picture rather than calling the
+                # tool. That description is the better prompt — the request itself
+                # says what to change, not what to draw.
+                self._image_desc = (self._image_desc or _as_prompt(visible)
+                                    or (text or ""))
                 if not visible.strip():
                     # The whole reply was the description, which is stripped — without
                     # this the user gets an empty bubble and a card out of nowhere.
@@ -797,6 +831,7 @@ class Session:
                 lambda: asyncio.create_task(update(status="working",
                                                    detail=detail, progress=frac)))
 
+        self._last_image_prompt = card.get("prompt", "")
         out = os.path.join(images.images_dir(),
                            images.filename_for(card.get("subject", ""), card_id))
         released = False

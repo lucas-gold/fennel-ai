@@ -92,8 +92,7 @@ a `.dmg`.
 
 Takes about a minute, most of it copying the runtime. Two notes:
 
-- `bundle-app.sh` prints `NOT distributable yet` whenever it signed ad-hoc, so it
-  is always clear which kind of build you are holding. (Right-click -> open required)
+- `bundle-app.sh` prints `NOT distributable yet` if the app is not notorized, still works but requires the user to go to Settings -> Privacy & Security -> Open Fennel Anyway
 - **Quit the running app first** (`pkill -f "Fennel.app/Contents/MacOS/Fennel"`),
   or you will bundle while the old copy still holds files.
 - **The icon is not rebuilt automatically.** After changing the geometry in
