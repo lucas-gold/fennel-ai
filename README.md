@@ -1,7 +1,6 @@
 # Fennel
 
-A local speech-to-speech companion for Apple Silicon Macs. Text or voice,
-running entirely on-device. No account, and no network needed after the first
+A local text or speech-to-speech companion for Apple Silicon Macs. Running entirely on-device. No account, and no network needed after the first
 model download.
 
 ## Architecture — two local processes
@@ -43,9 +42,7 @@ the tool definitions before it is added to the list in `config.py`.
 
 ## Platform
 
-- **Apple Silicon, macOS 14 or later.** MLX and SwiftUI are both Apple-only.
-- **Direct download**, signed with a Developer ID and notarised. Not the App
-  Store.
+- **Apple Silicon (M1 or later), macOS 14 or later.** MLX and SwiftUI are both Apple-only.
 
 ## Layout
 
@@ -96,6 +93,8 @@ a `.dmg`.
 
 Takes about a minute, most of it copying the runtime. Two notes:
 
+- `bundle-app.sh` prints `NOT distributable yet` whenever it signed ad-hoc, so it
+  is always clear which kind of build you are holding. (Right-click -> open required)
 - **Quit the running app first** (`pkill -f "Fennel.app/Contents/MacOS/Fennel"`),
   or you will bundle while the old copy still holds files.
 - **The icon is not rebuilt automatically.** After changing the geometry in
@@ -103,27 +102,6 @@ Takes about a minute, most of it copying the runtime. Two notes:
   ```bash
   swift scripts/make-icon.swift app/Resources
   ```
-
-### Building one other people can open
-
-Ad-hoc signing is the default and is fine locally, but Gatekeeper will refuse it
-on anyone else's Mac. A distributable build needs a Developer ID certificate and
-notarisation:
-
-```bash
-DEVELOPER_ID="Developer ID Application: Your Name (TEAMID)" ./scripts/bundle-app.sh
-./scripts/notarize.sh                         # submits, waits, staples
-```
-
-One-time notarisation setup:
-
-```bash
-xcrun notarytool store-credentials fennel \
-  --apple-id you@example.com --team-id TEAMID --password APP_SPECIFIC_PASSWORD
-```
-
-`bundle-app.sh` prints `NOT distributable yet` whenever it signed ad-hoc, so it
-is always clear which kind of build you are holding.
 
 ## Licence
 
