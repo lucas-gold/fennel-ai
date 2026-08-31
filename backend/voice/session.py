@@ -524,12 +524,13 @@ class Session:
                              and _EDIT_IMAGE.search(text or ""))
         prompt_user = self._memory.preamble(self._session_id, text) + text
         if editing_image:
+            # The new prompt is built in code, so say nothing about the picture
+            # — asked to describe it, the model rewrites the scene and invents
+            # detail nobody asked for.
             prompt_user += (
-                f"\n<hint>\nThe picture you drew was: {self._last_image_prompt}\n"
-                "They want it changed. Describe the whole new picture in one "
-                "paragraph, carrying over everything they did not ask you to "
-                "change. Describe the picture itself, not what you are doing."
-                "\n</hint>")
+                "\n<hint>\nThey want the last picture changed. It is being "
+                "redrawn already. Say so in one short sentence and nothing "
+                "else — do not describe the picture.\n</hint>")
         self._memory.remember(self._session_id, "user", text,
                               prompt_text=prompt_user)
         self._messages.append({"role": "user", "content": prompt_user})
@@ -704,11 +705,16 @@ class Session:
                           and (self._image_desc or editing_image
                                or _DRAWY.search(text or "")))
             if want_image:
-                # The model usually describes the picture rather than calling the
-                # tool. That description is the better prompt — the request itself
-                # says what to change, not what to draw.
-                self._image_desc = (self._image_desc or _as_prompt(visible)
-                                    or (text or ""))
+                from voice.tools import edit_prompt
+                if editing_image:
+                    self._image_desc = edit_prompt(self._last_image_prompt,
+                                                   text or "")
+                else:
+                    # For a new picture the model's own description is a richer
+                    # prompt than the bare request; the request has its "draw me
+                    # a" stripped so it does not end up in the picture.
+                    self._image_desc = (self._image_desc or _as_prompt(visible)
+                                        or edit_prompt("", text or ""))
                 if not visible.strip():
                     # The whole reply was the description, which is stripped — without
                     # this the user gets an empty bubble and a card out of nowhere.

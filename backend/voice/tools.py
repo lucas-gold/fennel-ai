@@ -40,6 +40,31 @@ _TRAILING = {"a", "an", "the", "with", "of", "in", "on", "at", "and", "for",
              "huge", "big", "small", "tiny", "bright", "dark", "very", "more"}
 
 
+#: Lead-ins on a follow-up request, so "make it brighter" becomes "brighter"
+#: and can be appended to the previous prompt.
+_EDIT_LEAD = re.compile(
+    r"^\s*(please\s+)?(can you\s+|could you\s+)?"
+    r"(?:(?:generate|draw|render|create|make|redo|do|try|add|include|put)\s+)?"
+    r"(?:me\s+)?"
+    r"(?:(?:a|an|the)\s+(?:image|picture|photo|drawing)\s+(?:of\s+)?)?"
+    r"(?:again\s+)?(?:but\s+|and\s+)?"
+    r"(?:make\s+)?(?:(?:it|that|this|the)\s+)?", re.I)
+
+
+def edit_prompt(previous: str, request: str) -> str:
+    """The previous prompt plus what the user asked to change.
+
+    Built here rather than asked of the model: told to describe the new picture
+    it rewrites the whole scene and invents details nobody asked for.
+    """
+    clause = _EDIT_LEAD.sub("", request.strip()).strip(" ,.")
+    if not previous:
+        return clause or request.strip()
+    if not clause:
+        return previous
+    return f"{previous.rstrip(' ,.')}, {clause}"
+
+
 def _short_title(prompt: str) -> str:
     """A name for the card: "cat sleeping on a bed", not six words stopping
     mid-phrase.
