@@ -1,7 +1,6 @@
 # Fennel
 
-A local text or speech-to-speech companion for Apple Silicon Macs. Running entirely on-device. No account, and no network needed after the first
-model download.
+A local text and speech-to-speech AI companion for Apple Silicon Macs. Running entirely on-device. No account, and no network needed after the first model download.
 
 ## Architecture — two local processes
 
@@ -31,7 +30,7 @@ Audio in is 512-sample int16 frames at 16 kHz; audio out is a `>II` header
 
 ## Models
 
-The model is chosen at launch, from Light (Qwen3 1.7B, 1.0 GB) up to Agent
+The LLM is chosen at launch, from Light (Qwen3 1.7B, 1.0 GB) up to Agent
 (Hermes 4 14B, 8.3 GB), or any MLX repo from Hugging Face pasted in by hand.
 One runs at a time. Speech recognition, synthesis and embeddings are fixed and
 add about 1.2 GB; image generation is optional and adds 4.6 GB.
